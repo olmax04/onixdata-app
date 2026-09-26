@@ -6,6 +6,7 @@ import { usePathname, useSearchParams } from "next/navigation"
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  DatabaseIcon,
   FolderKanbanIcon,
   LayoutDashboardIcon,
   LogOutIcon,
@@ -17,6 +18,7 @@ import {
   SettingsIcon,
   SmartphoneIcon,
   UserIcon,
+  UsersIcon,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -49,6 +51,8 @@ import { cn } from "@/lib/utils"
 export const navItems = [
   { href: "/dashboard", label: "Обзор", icon: LayoutDashboardIcon },
   { href: "/dashboard/instances", label: "Инстансы", icon: FolderKanbanIcon },
+  { href: "/dashboard/datasets", label: "База пользователей", icon: UsersIcon },
+  { href: "/dashboard/sources", label: "Источники", icon: DatabaseIcon },
   { href: "/dashboard/settings", label: "Настройки", icon: SettingsIcon },
 ]
 
@@ -160,6 +164,8 @@ function SidebarNavItems({ onNavigate }: { onNavigate?: () => void }) {
       pathname === "/dashboard/emulators" ||
       pathname.startsWith("/dashboard/emulators/")) &&
     !currentInstance
+  const isDatasetsActive = pathname === "/dashboard/datasets"
+  const isSourcesActive = pathname === "/dashboard/sources"
   const isSettingsActive =
     pathname === "/dashboard/settings" || pathname.startsWith("/dashboard/settings/")
 
@@ -389,8 +395,50 @@ function SidebarNavItems({ onNavigate }: { onNavigate?: () => void }) {
         )}
       </div>
 
-      {/* 3. Настройки */}
-      <div className="pt-2">
+      {/* 3. База данных пользователей (Supabase) */}
+      <div className="pt-1">
+        <Link
+          href="/dashboard/datasets"
+          onClick={onNavigate}
+          aria-current={isDatasetsActive ? "page" : undefined}
+          className={cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sidebar-ring",
+            isDatasetsActive
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+          )}
+        >
+          <UsersIcon
+            className={cn("size-4 shrink-0", isDatasetsActive && "text-sidebar-primary")}
+            aria-hidden="true"
+          />
+          <span>База пользователей</span>
+        </Link>
+      </div>
+
+      {/* 4. Источники и группы (Supabase) */}
+      <div className="pt-0.5">
+        <Link
+          href="/dashboard/sources"
+          onClick={onNavigate}
+          aria-current={isSourcesActive ? "page" : undefined}
+          className={cn(
+            "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sidebar-ring",
+            isSourcesActive
+              ? "bg-sidebar-accent text-sidebar-accent-foreground"
+              : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+          )}
+        >
+          <DatabaseIcon
+            className={cn("size-4 shrink-0", isSourcesActive && "text-sidebar-primary")}
+            aria-hidden="true"
+          />
+          <span>Источники</span>
+        </Link>
+      </div>
+
+      {/* 5. Настройки */}
+      <div className="pt-1">
         <Link
           href="/dashboard/settings"
           onClick={onNavigate}
