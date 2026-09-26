@@ -1,0 +1,2924 @@
+{
+  "openapi" : "3.1.0",
+  "info" : {
+    "title" : "Viber Parser API",
+    "version" : "1.0"
+  },
+  "externalDocs" : {
+    "url" : "/"
+  },
+  "servers" : [ ],
+  "tags" : [ ],
+  "paths" : {
+    "/api/viber/start" : {
+      "post" : {
+        "tags" : [ "Viber System" ],
+        "summary" : "Запустить Viber",
+        "description" : "Запускает приложение Viber через ADB. Опционально очищает данные.",
+        "operationId" : "startViber",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "Параметры запуска",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.ViberStartRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Viber успешно запущен",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.ViberStartResponse"
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Ошибка запуска",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/viber/status" : {
+      "get" : {
+        "tags" : [ "Viber System" ],
+        "summary" : "Статус Viber",
+        "description" : "Проверяет, запущен ли процесс Viber и находится ли он на переднем плане.",
+        "operationId" : "getViberStatus",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Текущий статус получен",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.ViberStatusResponse"
+                }
+              }
+            }
+          },
+          "503" : {
+            "description" : "Эмулятор недоступен",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/auth/phone" : {
+      "post" : {
+        "tags" : [ "Authentication" ],
+        "description" : "Выбирает страну из списка (по имени, напр. Belarus), вводит номер телефона и автоматически запрашивает звонок (Call me).",
+        "operationId" : "Login",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "Данные для ввода номера: phoneNumber (напр. '+1234567890'), countryName (напр. 'Belarus') или countryCode ('BY'). Опционально, если заданы в переменных окружения VIBER_DEFAULT_PHONE и VIBER_DEFAULT_COUNTRY.",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.LoginRequest"
+              }
+            }
+          },
+          "required" : false
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Номер введён",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.LoginResponse"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Неверный формат или ошибка Frida",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/auth/code" : {
+      "post" : {
+        "tags" : [ "Authentication" ],
+        "description" : "Вводит код активации (последние 4 цифры входящего проверочного звонка или SMS).",
+        "operationId" : "Enter Code",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "Последние 4 цифры звонившего номера (код активации)",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.CodeRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Код введён, авторизация завершена",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.LoginResponse"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Неверный код или ошибка",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/participants/collect" : {
+      "post" : {
+        "tags" : [ "Participants" ],
+        "summary" : "Запустить сбор участников группы",
+        "description" : "Запускает фоновую задачу сбора участников группы/сообщества через Frida и Appium. Задача выполняется асинхронно — прогресс отслеживается через /api/tasks/{id}.",
+        "operationId" : "collectParticipants",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "Целевая группа и параметры сбора",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.CollectParticipantsRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "202" : {
+            "description" : "Задача принята к исполнению",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.TaskCreatedResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Эмулятор занят выполнением другой задачи",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/participants/online-status" : {
+      "post" : {
+        "tags" : [ "Participants" ],
+        "summary" : "Запросить онлайн-статус участников",
+        "description" : "Возвращает признак 'в сети' и дату последней активности для списка участников — по memberId напрямую или по номерам телефонов (сопоставляются с БД).",
+        "operationId" : "getOnlineStatuses",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "memberId и/или номера телефонов для проверки",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.QueryOnlineStatusRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Массив статусов активности",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.OnlineStatusItem"
+                  },
+                  "title" : "List<OnlineStatusItem>"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/groups" : {
+      "get" : {
+        "tags" : [ "Groups" ],
+        "summary" : "Получить список групп и чатов Viber",
+        "description" : "Возвращает беседы из локального снимка БД. По умолчанию только группы и сообщества (личные чаты 1-to-1 исключены), передайте all=true чтобы включить их.",
+        "operationId" : "getGroups",
+        "parameters" : [ {
+          "name" : "all",
+          "in" : "query",
+          "description" : "Включить личные чаты (1-to-1). По умолчанию false.",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Список бесед",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.GroupSummary"
+                  },
+                  "title" : "List<GroupSummary>"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/groups/{id}" : {
+      "get" : {
+        "tags" : [ "Groups" ],
+        "summary" : "Получить подробную информацию о группе",
+        "description" : "Возвращает данные группы по её ID (row ID беседы) вместе с кратким списком активных участников.",
+        "operationId" : "getGroup",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID беседы (row ID)",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Подробности группы",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.GroupDetail"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Группа не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/groups/{id}/participants" : {
+      "get" : {
+        "tags" : [ "Groups" ],
+        "summary" : "Получить участников группы из БД",
+        "description" : "Возвращает текущий список участников группы, как он сохранён в локальном снимке базы данных (без обращения к устройству).",
+        "operationId" : "getGroupParticipants",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID беседы (row ID)",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Массив участников",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.ParticipantModel"
+                  },
+                  "title" : "List<ParticipantModel>"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Группа не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/tasks" : {
+      "get" : {
+        "tags" : [ "Tasks" ],
+        "summary" : "Получить список всех задач",
+        "description" : "Возвращает все фоновые задачи automation-сервиса. Можно отфильтровать по статусу (initializing, starting, running, stopped, error, ready).",
+        "operationId" : "getAllTasks",
+        "parameters" : [ {
+          "name" : "status",
+          "in" : "query",
+          "description" : "Фильтр по статусу (initializing, starting, running, stopped, error, ready)",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Список задач",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.TaskSummary"
+                  },
+                  "title" : "List<TaskSummary>"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/tasks/{id}" : {
+      "get" : {
+        "tags" : [ "Tasks" ],
+        "summary" : "Получить подробный статус задачи",
+        "description" : "Возвращает статус задачи вместе с историей выполненных шагов и, если задача завершена успешно (status = ready), итоговым результатом.",
+        "operationId" : "getTaskDetail",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID задачи",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Подробности задачи",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.TaskDetail"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Задача не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/tasks/{id}/participants" : {
+      "get" : {
+        "tags" : [ "Participants" ],
+        "summary" : "Получить участников завершённой задачи",
+        "description" : "Возвращает список участников, собранных задачей, чей статус ready.",
+        "operationId" : "getTaskParticipants",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID задачи сбора участников",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Массив участников",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.ParticipantModel"
+                  },
+                  "title" : "List<ParticipantModel>"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Задача не найдена или результат ещё не готов",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/tasks/{id}/stop" : {
+      "post" : {
+        "tags" : [ "Tasks" ],
+        "summary" : "Остановить выполнение задачи",
+        "description" : "Отправляет сигнал остановки активной задаче. Задача переходит в статус stopped.",
+        "operationId" : "stopTask",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID задачи",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Задача остановлена",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.StopTaskResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/database/sync" : {
+      "post" : {
+        "tags" : [ "Database" ],
+        "summary" : "Синхронизировать локальный снимок БД",
+        "description" : "Копирует боевую SQLite-базу Viber с эмулятора в локальный снимок automation-сервиса. Все /api/groups и /api/database эндпоинты читают из этого снимка.",
+        "operationId" : "syncDatabase",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Синхронизация выполнена",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.SyncResult"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/database/stats" : {
+      "get" : {
+        "tags" : [ "Database" ],
+        "summary" : "Получить статистику базы данных",
+        "description" : "Возвращает количество бесед, участников (включая недешифрованных) и сообщений в текущем локальном снимке БД.",
+        "operationId" : "getDatabaseStats",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Статистика БД",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.DatabaseStats"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/database/decode" : {
+      "post" : {
+        "tags" : [ "Database" ],
+        "summary" : "Дешифровать недешифрованные member_id",
+        "description" : "Находит записи участников с зашифрованным member_id (формат em:...) и дешифрует их в боевой базе данных эмулятора. Поддерживает режим предпросмотра (dryRun).",
+        "operationId" : "decodeParticipants",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "Параметры дешифровки",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.DecodeRequest"
+              }
+            }
+          },
+          "required" : false
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Результат дешифровки",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.DecodeResult"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/messages/monitor/start" : {
+      "post" : {
+        "tags" : [ "Messages" ],
+        "summary" : "Запустить мониторинг сообщений",
+        "description" : "Запускает фоновый мониторинг включённых групп. Сообщения ловятся мгновенно через Frida-хук записи в SQLite, опрос БД — как страховочный резервный путь.",
+        "operationId" : "startMonitor",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "Опционально: группа для немедленного включения и параметры опроса",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.StartMonitorRequest"
+              }
+            }
+          },
+          "required" : false
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Мониторинг запущен",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.MonitorStatus"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/messages/monitor/stop" : {
+      "post" : {
+        "tags" : [ "Messages" ],
+        "summary" : "Остановить мониторинг сообщений",
+        "description" : "Останавливает фоновый опрос. Курсоры групп (lastMessageId) сохраняются для последующего продолжения без потери истории.",
+        "operationId" : "stopMonitor",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Мониторинг остановлен",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.MonitorStatus"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/messages/monitor/status" : {
+      "get" : {
+        "tags" : [ "Messages" ],
+        "summary" : "Получить статус мониторинга",
+        "description" : "Возвращает текущее состояние монитора: запущен ли, список групп, счётчики обработанных сообщений и извлечённых телефонов.",
+        "operationId" : "getMonitorStatus",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Текущий статус",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.MonitorStatus"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/messages/monitor/groups" : {
+      "get" : {
+        "tags" : [ "Messages" ],
+        "summary" : "Список групп на мониторинге",
+        "description" : "Возвращает группы с флагом enabled и текущим курсором catch-up (lastMessageId) для каждой.",
+        "operationId" : "getMonitoredGroups",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Список групп",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.MonitoredGroup"
+                  },
+                  "title" : "List<MonitoredGroup>"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/messages/monitor/groups/{id}/enable" : {
+      "post" : {
+        "tags" : [ "Messages" ],
+        "summary" : "Включить мониторинг группы",
+        "description" : "Включает мониторинг конкретной группы по её ID. После рестарта эмулятора сообщения догоняются с сохранённого курсора, если fromLatest не указан явно.",
+        "operationId" : "enableMonitorGroup",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID беседы (row ID)",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        } ],
+        "requestBody" : {
+          "description" : "Опционально: пропустить историю (fromLatest)",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.EnableMonitorGroupRequest"
+              }
+            }
+          },
+          "required" : false
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Группа включена в мониторинг",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.MonitorStatus"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Группа не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/messages/monitor/groups/{id}/disable" : {
+      "post" : {
+        "tags" : [ "Messages" ],
+        "summary" : "Выключить мониторинг группы",
+        "description" : "Выключает мониторинг группы. Курсор сохраняется для следующего включения.",
+        "operationId" : "disableMonitorGroup",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID беседы (row ID)",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Группа выключена из мониторинга",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.MonitorStatus"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Группа не стоит на мониторинге",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/broadcast/status" : {
+      "get" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Текущая запущенная кампания рассылки",
+        "description" : "Одновременно рассылает не больше одной кампании — эмулятор один.",
+        "operationId" : "getBroadcastStatus",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Статус рассылки",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.BroadcastStatus"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/broadcast/history/last" : {
+      "get" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Последняя отправка в каждую беседу",
+        "description" : "По одной записи на беседу: какая кампания, какой текст и когда отправила последней.",
+        "operationId" : "getBroadcastLastSends",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Последние отправки",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.SendHistoryEntry"
+                  },
+                  "title" : "List<SendHistoryEntry>"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/broadcast/history" : {
+      "get" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "История отправок",
+        "description" : "Попытки отправки, новые сверху. Неудачные попытки тоже сохраняются — с текстом ошибки.",
+        "operationId" : "getBroadcastHistory",
+        "parameters" : [ {
+          "name" : "conversationId",
+          "in" : "query",
+          "description" : "Оставить только отправки в эту беседу",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        }, {
+          "name" : "campaignId",
+          "in" : "query",
+          "description" : "Оставить только отправки этой кампании",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        }, {
+          "name" : "limit",
+          "in" : "query",
+          "description" : "Сколько записей вернуть, по умолчанию 100",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Записи истории",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.SendHistoryEntry"
+                  },
+                  "title" : "List<SendHistoryEntry>"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/broadcast/campaigns" : {
+      "get" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Список кампаний рассылки",
+        "operationId" : "listCampaigns",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Кампании, новые сверху",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "type" : "array",
+                  "items" : {
+                    "$ref" : "#/components/schemas/com.viber.models.Campaign"
+                  },
+                  "title" : "List<Campaign>"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      },
+      "post" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Создать кампанию рассылки",
+        "description" : "Кампания создаётся остановленной. Рассылка начнётся только после вызова /start.",
+        "operationId" : "createCampaign",
+        "parameters" : [ ],
+        "requestBody" : {
+          "description" : "Беседы, варианты текста и расписание",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.CreateCampaignRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "201" : {
+            "description" : "Кампания создана",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.Campaign"
+                }
+              }
+            }
+          },
+          "400" : {
+            "description" : "Пустой список текстов или интервал меньше 5 секунд",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/broadcast/campaigns/{id}" : {
+      "get" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Кампания по ID",
+        "operationId" : "getCampaign",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID кампании",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Кампания",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.Campaign"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Кампания не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      },
+      "delete" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Удалить кампанию",
+        "description" : "История отправок удалённой кампании сохраняется.",
+        "operationId" : "deleteCampaign",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID кампании",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Кампания удалена",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.CampaignDeletedResponse"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Кампания запущена",
+            "headers" : { }
+          },
+          "404" : {
+            "description" : "Кампания не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      },
+      "patch" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Изменить кампанию",
+        "description" : "Менять можно только остановленную кампанию. Переданы будут лишь указанные поля.",
+        "operationId" : "updateCampaign",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID кампании",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "requestBody" : {
+          "description" : "Поля, которые нужно изменить",
+          "content" : {
+            "application/json" : {
+              "schema" : {
+                "$ref" : "#/components/schemas/com.viber.models.UpdateCampaignRequest"
+              }
+            }
+          },
+          "required" : true
+        },
+        "responses" : {
+          "200" : {
+            "description" : "Кампания обновлена",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.Campaign"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Кампания запущена",
+            "headers" : { }
+          },
+          "404" : {
+            "description" : "Кампания не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/broadcast/campaigns/{id}/start" : {
+      "post" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Запустить рассылку",
+        "description" : "Пауза между отправками — intervalMs, вариант текста выбирается стратегией rotation. Если заданы рабочие часы, вне окна рассылка ждёт.",
+        "operationId" : "startCampaign",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID кампании",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Рассылка запущена",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.Campaign"
+                }
+              }
+            }
+          },
+          "409" : {
+            "description" : "Другая кампания уже рассылает",
+            "headers" : { }
+          },
+          "400" : {
+            "description" : "У выбранной беседы нет названия — её нельзя открыть в списке чатов",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/broadcast/campaigns/{id}/stop" : {
+      "post" : {
+        "tags" : [ "Broadcast" ],
+        "summary" : "Остановить рассылку",
+        "description" : "Текущая отправка досылается, следующая не начинается. История сохраняется.",
+        "operationId" : "stopCampaign",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID кампании",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Рассылка остановлена",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.Campaign"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Кампания не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/users" : {
+      "get" : {
+        "tags" : [ "Users" ],
+        "summary" : "Получить пользователей из базы Supabase",
+        "description" : "Постранично возвращает базу пользователей Viber, накопленную в Supabase (таблица viber_users). Можно отфильтровать по фрагменту номера или имени.",
+        "operationId" : "listUsers",
+        "parameters" : [ {
+          "name" : "limit",
+          "in" : "query",
+          "description" : "Размер страницы (1..1000, по умолчанию 100)",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        }, {
+          "name" : "offset",
+          "in" : "query",
+          "description" : "Смещение (по умолчанию 0)",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        }, {
+          "name" : "phone",
+          "in" : "query",
+          "description" : "Фрагмент номера телефона, только цифры учитываются",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        }, {
+          "name" : "name",
+          "in" : "query",
+          "description" : "Фрагмент имени, без учёта регистра",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Страница пользователей",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.UsersPage"
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Supabase не настроен (SUPABASE_URL / SUPABASE_SERVICE_KEY)",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/users/sync/status" : {
+      "get" : {
+        "tags" : [ "Users" ],
+        "summary" : "Проверить, записались ли данные в Supabase",
+        "description" : "Только чтение. Показывает, настроен ли Supabase и отвечает ли он, сколько строк в viber_users, viber_groups и viber_group_members, и по каждой группе: сколько пользователей записала последняя синхронизация, сколько участников активно и когда она прошла. Ошибку подключения возвращает в поле message с reachable = false, а не кодом 500.",
+        "operationId" : "usersSyncStatus",
+        "parameters" : [ {
+          "name" : "conversationId",
+          "in" : "query",
+          "description" : "ID беседы (как в /api/groups), чтобы проверить только одну группу",
+          "required" : false,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Состояние записей в Supabase",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.UsersSyncStatus"
+                }
+              }
+            }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/users/sync/all" : {
+      "post" : {
+        "tags" : [ "Users" ],
+        "summary" : "Выгрузить всех пользователей со всех групп в Supabase",
+        "description" : "Отдельная операция массовой загрузки: проходит по всем группам и сообществам на устройстве и для каждой делает то же, что /api/users/sync/group/{id}. Группа, которая не выгрузилась, попадает в failed и не останавливает остальные. Один человек из нескольких групп хранится одной строкой в viber_users.",
+        "operationId" : "syncAllUsers",
+        "parameters" : [ ],
+        "responses" : {
+          "200" : {
+            "description" : "Итог загрузки по каждой группе",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.UsersSyncAllResult"
+                }
+              }
+            }
+          },
+          "500" : {
+            "description" : "Supabase не настроен (SUPABASE_URL / SUPABASE_SERVICE_KEY)",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/users/sync/group/{id}" : {
+      "post" : {
+        "tags" : [ "Users" ],
+        "summary" : "Выгрузить участников группы в Supabase",
+        "description" : "Берёт участников группы из локального снимка SQLite бота и записывает их в базу пользователей Supabase: viber_users (один человек — одна строка, ключ member_id или телефон), viber_groups и связи viber_group_members. Свой аккаунт и записи без member_id и номера пропускаются; участники, которых больше нет в группе, помечаются неактивными.",
+        "operationId" : "syncGroupUsers",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID беседы (row ID в SQLite, как в /api/groups)",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Результат синхронизации",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.UsersSyncResult"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Группа не найдена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    },
+    "/api/users/sync/task/{id}" : {
+      "post" : {
+        "tags" : [ "Users" ],
+        "summary" : "Выгрузить результат задачи сбора в Supabase",
+        "description" : "То же, что синхронизация группы, но по результату завершённой задачи /api/participants/collect: в нём есть статус онлайн и время последней активности.",
+        "operationId" : "syncTaskUsers",
+        "parameters" : [ {
+          "name" : "id",
+          "in" : "path",
+          "description" : "ID задачи со статусом ready",
+          "required" : true,
+          "deprecated" : false,
+          "explode" : false,
+          "schema" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        } ],
+        "responses" : {
+          "200" : {
+            "description" : "Результат синхронизации",
+            "headers" : { },
+            "content" : {
+              "application/json" : {
+                "schema" : {
+                  "$ref" : "#/components/schemas/com.viber.models.UsersSyncResult"
+                }
+              }
+            }
+          },
+          "404" : {
+            "description" : "Задача не найдена или ещё не завершена",
+            "headers" : { }
+          }
+        },
+        "deprecated" : false
+      }
+    }
+  },
+  "components" : {
+    "schemas" : {
+      "com.viber.models.ViberStartRequest" : {
+        "type" : "object",
+        "properties" : {
+          "clearData" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "waitForLogin" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          }
+        },
+        "required" : [ "clearData", "waitForLogin" ],
+        "title" : "ViberStartRequest"
+      },
+      "com.viber.models.ViberStartResponse" : {
+        "type" : "object",
+        "properties" : {
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "pid" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "success" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          }
+        },
+        "required" : [ "message", "success" ],
+        "title" : "ViberStartResponse"
+      },
+      "com.viber.models.ErrorType" : {
+        "type" : "string",
+        "enum" : [ "BOT_ERROR", "RPC_TIMEOUT", "API_INTERNAL_ERROR", "VALIDATION_ERROR", "DEVICE_BUSY", "NOT_FOUND" ],
+        "title" : "ErrorType"
+      },
+      "com.viber.models.ErrorResponse" : {
+        "type" : "object",
+        "properties" : {
+          "errorType" : {
+            "$ref" : "#/components/schemas/com.viber.models.ErrorType"
+          },
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "path" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "success" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "timestamp" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "errorType", "message", "path", "success", "timestamp" ],
+        "title" : "ErrorResponse"
+      },
+      "com.viber.models.ViberStatusResponse" : {
+        "type" : "object",
+        "properties" : {
+          "isRunning" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "pid" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "isRunning" ],
+        "title" : "ViberStatusResponse"
+      },
+      "com.viber.models.LoginRequest" : {
+        "type" : "object",
+        "properties" : {
+          "countryCode" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "countryName" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "phoneNumber" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "title" : "LoginRequest"
+      },
+      "com.viber.models.LoginResponse" : {
+        "type" : "object",
+        "properties" : {
+          "data" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "step" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "success" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          }
+        },
+        "required" : [ "message", "success" ],
+        "title" : "LoginResponse"
+      },
+      "com.viber.models.CodeRequest" : {
+        "type" : "object",
+        "properties" : {
+          "code" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "code" ],
+        "title" : "CodeRequest"
+      },
+      "com.viber.models.CollectParticipantsRequest" : {
+        "type" : "object",
+        "properties" : {
+          "allowPartial" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "fetchOnlineStatus" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "group" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "idleTimeoutMs" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "numbersSyncTimeoutMs" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "restartApp" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "syncLiveDbAfter" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          }
+        },
+        "required" : [ "allowPartial", "fetchOnlineStatus", "group", "idleTimeoutMs", "numbersSyncTimeoutMs", "restartApp", "syncLiveDbAfter" ],
+        "title" : "CollectParticipantsRequest"
+      },
+      "com.viber.models.TaskCreatedResponse" : {
+        "type" : "object",
+        "properties" : {
+          "group" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "status" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "taskId" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "group", "message", "status", "taskId" ],
+        "title" : "TaskCreatedResponse"
+      },
+      "com.viber.models.QueryOnlineStatusRequest" : {
+        "type" : "object",
+        "properties" : {
+          "memberIds" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string",
+              "title" : "String"
+            },
+            "title" : "List<String>"
+          },
+          "phoneNumbers" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string",
+              "title" : "String"
+            },
+            "title" : "List<String>"
+          }
+        },
+        "required" : [ "memberIds", "phoneNumbers" ],
+        "title" : "QueryOnlineStatusRequest"
+      },
+      "com.viber.models.OnlineStatusItem" : {
+        "type" : "object",
+        "properties" : {
+          "isOnline" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "lastSeen" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "memberId" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "phoneNumber" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "isOnline", "memberId" ],
+        "title" : "OnlineStatusItem"
+      },
+      "com.viber.models.GroupSummary" : {
+        "type" : "object",
+        "properties" : {
+          "groupId" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "id" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "lastMessageDate" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "messageCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "participantCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "type" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "unreadCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "id", "messageCount", "participantCount", "type", "unreadCount" ],
+        "title" : "GroupSummary"
+      },
+      "com.viber.models.GroupParticipantSample" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "number" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "roleLabel" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "id", "roleLabel" ],
+        "title" : "GroupParticipantSample"
+      },
+      "com.viber.models.GroupDetail" : {
+        "type" : "object",
+        "properties" : {
+          "groupId" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "id" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "lastMessageDate" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "messageCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "participantCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "sampleParticipants" : {
+            "type" : [ "null", "array" ],
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.GroupParticipantSample"
+            },
+            "title" : "List<GroupParticipantSample>"
+          },
+          "type" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "unreadCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "id", "messageCount", "participantCount", "type", "unreadCount" ],
+        "title" : "GroupDetail"
+      },
+      "com.viber.models.ParticipantModel" : {
+        "type" : "object",
+        "properties" : {
+          "active" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "contactName" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "groupRole" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "id" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "isOnline" : {
+            "type" : [ "null", "boolean" ],
+            "title" : "Boolean"
+          },
+          "isSelf" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "lastSeen" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "memberId" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "number" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "roleLabel" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "viberName" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "active", "id", "isSelf", "roleLabel" ],
+        "title" : "ParticipantModel"
+      },
+      "com.viber.models.TaskSummary" : {
+        "type" : "object",
+        "properties" : {
+          "completedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "conversationId" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "currentStep" : {
+            "oneOf" : [ {
+              "type" : "null"
+            }, {
+              "$ref" : "#/components/schemas/com.viber.models.TaskStep"
+            } ]
+          },
+          "error" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "groupName" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "groupTarget" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "id" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "participantsCount" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "startedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "status" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "createdAt", "groupTarget", "id", "status" ],
+        "title" : "TaskSummary"
+      },
+      "com.viber.models.TaskStep" : {
+        "type" : "object",
+        "properties" : {
+          "description" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "durationMs" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "progress" : {
+            "type" : [ "null", "object" ],
+            "additionalProperties" : {
+              "type" : "string",
+              "title" : "String"
+            },
+            "title" : "Map<String,String>"
+          },
+          "startedAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "step" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "description", "startedAt", "step" ],
+        "title" : "TaskStep"
+      },
+      "com.viber.models.TaskCollectionResult" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "group" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "groupId" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "headerTotal" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "pagesCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "participantsCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "participantsWithPhone" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "savedCsvPath" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "savedJsonPath" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "savedTxtPath" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "conversationId", "group", "groupId", "pagesCount", "participantsCount", "participantsWithPhone", "savedCsvPath", "savedJsonPath", "savedTxtPath" ],
+        "title" : "TaskCollectionResult"
+      },
+      "com.viber.models.TaskDetail" : {
+        "type" : "object",
+        "properties" : {
+          "completedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "conversationId" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "currentStep" : {
+            "oneOf" : [ {
+              "type" : "null"
+            }, {
+              "$ref" : "#/components/schemas/com.viber.models.TaskStep"
+            } ]
+          },
+          "error" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "groupName" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "groupTarget" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "id" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "progress" : {
+            "type" : [ "null", "object" ],
+            "additionalProperties" : {
+              "type" : "string",
+              "title" : "String"
+            },
+            "title" : "Map<String,String>"
+          },
+          "result" : {
+            "oneOf" : [ {
+              "type" : "null"
+            }, {
+              "$ref" : "#/components/schemas/com.viber.models.TaskCollectionResult"
+            } ]
+          },
+          "startedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "status" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "stepHistory" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.TaskStep"
+            },
+            "title" : "List<TaskStep>"
+          }
+        },
+        "required" : [ "createdAt", "groupTarget", "id", "status", "stepHistory" ],
+        "title" : "TaskDetail"
+      },
+      "com.viber.models.StopTaskResponse" : {
+        "type" : "object",
+        "properties" : {
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "status" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "taskId" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "message", "status", "taskId" ],
+        "title" : "StopTaskResponse"
+      },
+      "com.viber.models.DatabaseStats" : {
+        "type" : "object",
+        "properties" : {
+          "conversationsCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "messagesCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "participantsCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "undecodedParticipantsCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "conversationsCount", "messagesCount", "participantsCount", "undecodedParticipantsCount" ],
+        "title" : "DatabaseStats"
+      },
+      "com.viber.models.SyncResult" : {
+        "type" : "object",
+        "properties" : {
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "stats" : {
+            "$ref" : "#/components/schemas/com.viber.models.DatabaseStats"
+          },
+          "success" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "timestamp" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "message", "stats", "success", "timestamp" ],
+        "title" : "SyncResult"
+      },
+      "com.viber.models.DecodeRequest" : {
+        "type" : "object",
+        "properties" : {
+          "dryRun" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "limit" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "restartApp" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "waitForSyncSeconds" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "dryRun", "restartApp", "waitForSyncSeconds" ],
+        "title" : "DecodeRequest"
+      },
+      "com.viber.models.DecodedItem" : {
+        "type" : "object",
+        "properties" : {
+          "id" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "newMemberId" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "oldMemberId" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "id", "newMemberId" ],
+        "title" : "DecodedItem"
+      },
+      "com.viber.models.DecodeResult" : {
+        "type" : "object",
+        "properties" : {
+          "decodedFound" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "dryRun" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "errorsCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "restartedApp" : {
+            "type" : [ "null", "boolean" ],
+            "title" : "Boolean"
+          },
+          "sampleDecoded" : {
+            "type" : [ "null", "array" ],
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.DecodedItem"
+            },
+            "title" : "List<DecodedItem>"
+          },
+          "success" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "totalRows" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "undecodedFound" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "decodedFound", "dryRun", "errorsCount", "message", "success", "totalRows", "undecodedFound" ],
+        "title" : "DecodeResult"
+      },
+      "com.viber.models.StartMonitorRequest" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "fromLatest" : {
+            "type" : [ "null", "boolean" ],
+            "title" : "Boolean"
+          },
+          "pollIntervalMs" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "startFromId" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "pollIntervalMs" ],
+        "title" : "StartMonitorRequest"
+      },
+      "com.viber.models.MonitoredGroup" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "enabled" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "lastMessageId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "conversationId", "enabled", "lastMessageId" ],
+        "title" : "MonitoredGroup"
+      },
+      "com.viber.models.MonitorStatus" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "groups" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.MonitoredGroup"
+            },
+            "title" : "List<MonitoredGroup>"
+          },
+          "isRunning" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "lastPollAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "lastProcessedMessageId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "liveWatch" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "phonesFromTextCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "phonesFromViberCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "pollIntervalMs" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "processedMessagesCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "groups", "isRunning", "lastProcessedMessageId", "liveWatch", "phonesFromTextCount", "phonesFromViberCount", "pollIntervalMs", "processedMessagesCount" ],
+        "title" : "MonitorStatus"
+      },
+      "com.viber.models.EnableMonitorGroupRequest" : {
+        "type" : "object",
+        "properties" : {
+          "fromLatest" : {
+            "type" : [ "null", "boolean" ],
+            "title" : "Boolean"
+          }
+        },
+        "title" : "EnableMonitorGroupRequest"
+      },
+      "com.viber.models.Campaign" : {
+        "type" : "object",
+        "properties" : {
+          "activeFrom" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "activeTo" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "createdAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "failedCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "groups" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.CampaignGroup"
+            },
+            "title" : "List<CampaignGroup>"
+          },
+          "id" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "intervalMs" : {
+            "type" : "integer",
+            "format" : "int64",
+            "title" : "Long"
+          },
+          "lastError" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "loop" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "messages" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string",
+              "title" : "String"
+            },
+            "title" : "List<String>"
+          },
+          "minIntervalPerChatMs" : {
+            "type" : "integer",
+            "format" : "int64",
+            "title" : "Long"
+          },
+          "name" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "nextGroupIndex" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "rotation" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "rotationState" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.ChatRotationState"
+            },
+            "title" : "List<ChatRotationState>"
+          },
+          "sentCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "startedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "status" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "stoppedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "updatedAt" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "createdAt", "failedCount", "groups", "id", "intervalMs", "loop", "messages", "minIntervalPerChatMs", "name", "nextGroupIndex", "rotation", "rotationState", "sentCount", "status", "updatedAt" ],
+        "title" : "Campaign"
+      },
+      "com.viber.models.CampaignGroup" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "conversationId" ],
+        "title" : "CampaignGroup"
+      },
+      "com.viber.models.ChatRotationState" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "lastMessageIndex" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "sendCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "conversationId", "sendCount" ],
+        "title" : "ChatRotationState"
+      },
+      "com.viber.models.BroadcastStatus" : {
+        "type" : "object",
+        "properties" : {
+          "campaign" : {
+            "oneOf" : [ {
+              "type" : "null"
+            }, {
+              "$ref" : "#/components/schemas/com.viber.models.Campaign"
+            } ]
+          },
+          "isRunning" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          }
+        },
+        "required" : [ "isRunning" ],
+        "title" : "BroadcastStatus"
+      },
+      "com.viber.models.SendHistoryEntry" : {
+        "type" : "object",
+        "properties" : {
+          "campaignId" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "conversationId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "conversationName" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "error" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "id" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "messageIndex" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "sentAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "status" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "text" : {
+            "type" : "string",
+            "title" : "String"
+          }
+        },
+        "required" : [ "campaignId", "conversationId", "id", "messageIndex", "sentAt", "status", "text" ],
+        "title" : "SendHistoryEntry"
+      },
+      "com.viber.models.CreateCampaignRequest" : {
+        "type" : "object",
+        "properties" : {
+          "activeFrom" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "activeTo" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "conversationIds" : {
+            "type" : "array",
+            "items" : {
+              "type" : "integer",
+              "format" : "int32",
+              "title" : "Int"
+            },
+            "title" : "List<Int>"
+          },
+          "intervalMs" : {
+            "type" : "integer",
+            "format" : "int64",
+            "title" : "Long"
+          },
+          "loop" : {
+            "type" : [ "null", "boolean" ],
+            "title" : "Boolean"
+          },
+          "messages" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string",
+              "title" : "String"
+            },
+            "title" : "List<String>"
+          },
+          "minIntervalPerChatMs" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int64",
+            "title" : "Long"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "rotation" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "conversationIds", "intervalMs", "messages" ],
+        "title" : "CreateCampaignRequest"
+      },
+      "com.viber.models.UpdateCampaignRequest" : {
+        "type" : "object",
+        "properties" : {
+          "activeFrom" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "activeTo" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "conversationIds" : {
+            "type" : [ "null", "array" ],
+            "items" : {
+              "type" : "integer",
+              "format" : "int32",
+              "title" : "Int"
+            },
+            "title" : "List<Int>"
+          },
+          "intervalMs" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int64",
+            "title" : "Long"
+          },
+          "loop" : {
+            "type" : [ "null", "boolean" ],
+            "title" : "Boolean"
+          },
+          "messages" : {
+            "type" : [ "null", "array" ],
+            "items" : {
+              "type" : "string",
+              "title" : "String"
+            },
+            "title" : "List<String>"
+          },
+          "minIntervalPerChatMs" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int64",
+            "title" : "Long"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "rotation" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "title" : "UpdateCampaignRequest"
+      },
+      "com.viber.models.CampaignDeletedResponse" : {
+        "type" : "object",
+        "properties" : {
+          "deleted" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          }
+        },
+        "required" : [ "deleted" ],
+        "title" : "CampaignDeletedResponse"
+      },
+      "com.viber.models.ViberUserRow" : {
+        "type" : "object",
+        "properties" : {
+          "firstSeenAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "id" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int64",
+            "title" : "Long"
+          },
+          "identityKey" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "isOnline" : {
+            "type" : [ "null", "boolean" ],
+            "title" : "Boolean"
+          },
+          "lastSeenAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "memberId" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "phone" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "updatedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "viberName" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "identityKey" ],
+        "title" : "ViberUserRow"
+      },
+      "com.viber.models.UsersPage" : {
+        "type" : "object",
+        "properties" : {
+          "items" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.ViberUserRow"
+            },
+            "title" : "List<ViberUserRow>"
+          },
+          "limit" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "offset" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "total" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "items", "limit", "offset" ],
+        "title" : "UsersPage"
+      },
+      "com.viber.models.GroupSyncStatus" : {
+        "type" : "object",
+        "properties" : {
+          "activeMembers" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "conversationId" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "groupKey" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "inactiveMembers" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "lastSyncedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "name" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "participantCount" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "groupKey", "participantCount" ],
+        "title" : "GroupSyncStatus"
+      },
+      "com.viber.models.UsersSyncStatus" : {
+        "type" : "object",
+        "properties" : {
+          "checkedAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "configured" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "groups" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.GroupSyncStatus"
+            },
+            "title" : "List<GroupSyncStatus>"
+          },
+          "groupsTotal" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "lastSyncedAt" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "membersTotal" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "reachable" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "usersTotal" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "checkedAt", "configured", "groups", "message", "reachable" ],
+        "title" : "UsersSyncStatus"
+      },
+      "com.viber.models.UsersSyncFailure" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "error" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "group" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          }
+        },
+        "required" : [ "conversationId", "error" ],
+        "title" : "UsersSyncFailure"
+      },
+      "com.viber.models.UsersSyncResult" : {
+        "type" : "object",
+        "properties" : {
+          "conversationId" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "deactivated" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "group" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "groupId" : {
+            "type" : [ "null", "string" ],
+            "title" : "String"
+          },
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "received" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "skipped" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "success" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "syncedAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "usersUpserted" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "deactivated", "message", "received", "skipped", "success", "syncedAt", "usersUpserted" ],
+        "title" : "UsersSyncResult"
+      },
+      "com.viber.models.UsersSyncAllResult" : {
+        "type" : "object",
+        "properties" : {
+          "failed" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.UsersSyncFailure"
+            },
+            "title" : "List<UsersSyncFailure>"
+          },
+          "groups" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/com.viber.models.UsersSyncResult"
+            },
+            "title" : "List<UsersSyncResult>"
+          },
+          "groupsTotal" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "message" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "success" : {
+            "type" : "boolean",
+            "title" : "Boolean"
+          },
+          "syncedAt" : {
+            "type" : "string",
+            "title" : "String"
+          },
+          "usersInDatabase" : {
+            "type" : [ "null", "integer" ],
+            "format" : "int32",
+            "title" : "Int"
+          },
+          "usersUpserted" : {
+            "type" : "integer",
+            "format" : "int32",
+            "title" : "Int"
+          }
+        },
+        "required" : [ "failed", "groups", "groupsTotal", "message", "success", "syncedAt", "usersUpserted" ],
+        "title" : "UsersSyncAllResult"
+      }
+    },
+    "examples" : { }
+  },
+  "webhooks" : { }
+}

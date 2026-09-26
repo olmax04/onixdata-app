@@ -309,3 +309,198 @@ export interface BroadcastStatusDto {
   isRunning: boolean
   campaign: BroadcastCampaign | null
 }
+
+// ==================== Swagger API Models ====================
+
+export interface ViberStartRequest {
+  clearData: boolean
+  waitForLogin: boolean
+}
+
+export interface ViberStartResponse {
+  isRunning: boolean
+  pid: number | null
+  message?: string
+  success?: boolean
+}
+
+export interface ViberStatusResponse {
+  isRunning: boolean
+  pid: number | null
+}
+
+export interface LoginRequest {
+  phoneNumber?: string | null
+  countryCode?: string | null
+  countryName?: string | null
+}
+
+export interface LoginResponse {
+  success: boolean
+  message: string
+  step?: string | null
+  data?: string | null
+}
+
+export interface CodeRequest {
+  code: string
+}
+
+export interface ViberUserRow {
+  id?: number | null
+  identityKey?: string
+  identity_key?: string
+  memberId?: string | null
+  member_id?: string | null
+  phone?: string | null
+  name?: string | null
+  viberName?: string | null
+  viber_name?: string | null
+  isOnline?: boolean | null
+  is_online?: boolean | null
+  lastSeenAt?: string | null
+  last_seen_at?: string | null
+  firstSeenAt?: string | null
+  first_seen_at?: string | null
+  updatedAt?: string | null
+  updated_at?: string | null
+}
+
+export interface UsersPage {
+  total: number | null
+  limit: number
+  offset: number
+  items: ViberUserRow[]
+}
+
+export interface GroupSyncStatus {
+  groupKey: string
+  conversationId: number
+  name: string
+  participantCount: number
+  activeMembers: number
+  inactiveMembers: number
+  lastSyncedAt?: string | null
+}
+
+export interface UsersSyncStatus {
+  configured: boolean
+  reachable: boolean
+  message: string
+  usersTotal: number | null
+  groupsTotal: number | null
+  membersTotal: number | null
+  lastSyncedAt: string | null
+  checkedAt: string
+  groups: GroupSyncStatus[]
+}
+
+export interface UsersSyncResult {
+  groupKey: string
+  conversationId: number
+  groupName: string
+  usersUpserted: number
+  usersInDatabase?: number | null
+  syncedAt: string
+  success: boolean
+  message?: string
+  error?: string | null
+}
+
+export interface UsersSyncAllResult {
+  success: boolean
+  message: string
+  groupsTotal: number
+  usersUpserted: number
+  usersInDatabase?: number | null
+  syncedAt: string
+  failed: number
+  groups: UsersSyncResult[]
+}
+
+export interface QueryOnlineStatusRequest {
+  memberIds: string[]
+  phoneNumbers: string[]
+}
+
+export interface OnlineStatusItem {
+  memberId: string
+  phoneNumber?: string | null
+  isOnline: boolean
+  lastSeen?: string | null
+}
+
+export interface CollectParticipantsRequest {
+  group: string
+  pageLimit?: number
+  scrollPages?: number
+  allowPartial?: boolean
+  restartApp?: boolean
+  forceRefresh?: boolean
+  deviceId?: string
+}
+
+export interface TaskCreatedResponse {
+  taskId: string
+  message: string
+}
+
+export interface StopTaskResponse {
+  id: string
+  status: string
+  message?: string
+}
+
+export interface CreateCampaignRequest {
+  name: string
+  groups: { conversationId: number; name?: string | null }[]
+  messages: string[]
+  intervalMs?: number
+  minIntervalPerChatMs?: number
+  rotation?: BroadcastRotation
+  loop?: boolean
+  activeFrom?: string | null
+  activeTo?: string | null
+}
+
+export interface UpdateCampaignRequest {
+  name?: string
+  groups?: { conversationId: number; name?: string | null }[]
+  messages?: string[]
+  intervalMs?: number
+  minIntervalPerChatMs?: number
+  rotation?: BroadcastRotation
+  loop?: boolean
+  activeFrom?: string | null
+  activeTo?: string | null
+}
+
+export interface CampaignDeletedResponse {
+  id: string
+  deleted: boolean
+}
+
+export interface GroupParticipantSample {
+  id: number
+  contactName?: string | null
+  isSelf: boolean
+  memberId?: string | null
+  name?: string | null
+  number?: string | null
+  roleLabel: string
+  viberName?: string | null
+}
+
+export interface GroupDetail {
+  id: number
+  groupId?: string | null
+  name?: string | null
+  type: number
+  participantCount: number
+  messageCount: number
+  unreadCount: number
+  lastMessageDate?: string | null
+  sampleParticipants?: GroupParticipantSample[] | null
+}
+
+

@@ -38,9 +38,12 @@ export async function updateSession(request: NextRequest) {
     },
   })
 
+  const authHeader = request.headers.get('authorization')
+  const jwt = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+
   const {
     data: { user },
-  } = await supabase.auth.getUser()
+  } = jwt ? await supabase.auth.getUser(jwt) : await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
 
