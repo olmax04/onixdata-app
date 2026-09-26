@@ -1,0 +1,294 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /*
+   * OnixData — только тёмная тема.
+   * Палитра продублирована в :root и .dark, чтобы не зависеть от переключателя
+   * темы и исключить «вспышку» светлого фона при загрузке.
+   */
+  :root,
+  .dark {
+    /* #0e0e0e / #ffffff */
+    --background: 0 0% 5.5%;
+    --foreground: 0 0% 100%;
+
+    /* #141414 */
+    --card: 0 0% 7.8%;
+    --card-foreground: 0 0% 100%;
+
+    /* #141414 */
+    --popover: 0 0% 7.8%;
+    --popover-foreground: 0 0% 100%;
+
+    /* #ff8975 — коралловый бренд-акцент / #0d0d0d */
+    --primary: 8.7 100% 72.9%;
+    --primary-foreground: 0 0% 5.1%;
+
+    /* #1f1f1f / #fafafa */
+    --secondary: 0 0% 12.2%;
+    --secondary-foreground: 0 0% 98%;
+
+    /* #191919 / #acafb9 */
+    --muted: 0 0% 9.8%;
+    --muted-foreground: 226.2 8.5% 70%;
+
+    /* #202020 / #ffffff — subtle hover-фон, НЕ бренд-акцент */
+    --accent: 0 0% 12.5%;
+    --accent-foreground: 0 0% 100%;
+
+    /* #e5484d / #ffffff */
+    --destructive: 358.1 75.1% 59%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* #2c2c2c / #2c2c2c / #ff8975 */
+    --border: 0 0% 17.3%;
+    --input: 0 0% 17.3%;
+    --ring: 8.7 100% 72.9%;
+
+    --radius: 0.75rem;
+
+    /* #ff8975 #e6e7ea #83858c #c96a5a #5c5e66 */
+    --chart-1: 8.7 100% 72.9%;
+    --chart-2: 225 8.7% 91%;
+    --chart-3: 226.7 3.8% 53.1%;
+    --chart-4: 8.6 50.7% 57.1%;
+    --chart-5: 228 5.2% 38%;
+
+    /* #0b0b0b #e6e7ea #ff8975 #0d0d0d #191919 #ffffff #212121 #ff8975 */
+    --sidebar-background: 0 0% 4.3%;
+    --sidebar-foreground: 225 8.7% 91%;
+    --sidebar-primary: 8.7 100% 72.9%;
+    --sidebar-primary-foreground: 0 0% 5.1%;
+    --sidebar-accent: 0 0% 9.8%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 12.9%;
+    --sidebar-ring: 8.7 100% 72.9%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+@layer utilities {
+  /* Мягкое коралловое свечение фона — как в hero лендинга OnixData */
+  .onix-glow {
+    background-image:
+      radial-gradient(
+        60rem 40rem at 50% -10%,
+        hsl(var(--primary) / 0.14),
+        transparent 60%
+      ),
+      radial-gradient(
+        40rem 30rem at 85% 15%,
+        hsl(var(--primary) / 0.07),
+        transparent 65%
+      );
+  }
+
+  /*
+   * Каскад появления левой колонки auth-страниц.
+   * Шаг 55 мс на 10 ступеней — от логотипа до © проходит ~495 мс.
+   * fill-mode: backwards здесь обязателен: без него элемент видно в финальном
+   * состоянии до старта собственной анимации, и каскад превращается в мигание.
+   * Ступени перечислены литералами в components/auth/auth-motion.ts —
+   * Tailwind сканирует исходники как текст и вырезает не найденные классы.
+   */
+  .auth-enter {
+    @apply animate-in fade-in slide-in-from-bottom-2 fill-mode-backwards;
+    animation-duration: 450ms;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .auth-enter-1 {
+    animation-delay: 0ms;
+  }
+  .auth-enter-2 {
+    animation-delay: 55ms;
+  }
+  .auth-enter-3 {
+    animation-delay: 110ms;
+  }
+  .auth-enter-4 {
+    animation-delay: 165ms;
+  }
+  .auth-enter-5 {
+    animation-delay: 220ms;
+  }
+  .auth-enter-6 {
+    animation-delay: 275ms;
+  }
+  .auth-enter-7 {
+    animation-delay: 330ms;
+  }
+  .auth-enter-8 {
+    animation-delay: 385ms;
+  }
+  .auth-enter-9 {
+    animation-delay: 440ms;
+  }
+  .auth-enter-10 {
+    animation-delay: 495ms;
+  }
+
+  /* Правая панель: мок-скриншот и догоняющая его карточка-метрика. */
+  .auth-rise {
+    @apply animate-in fade-in zoom-in-95 slide-in-from-bottom-4 fill-mode-backwards;
+    animation-duration: 700ms;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .auth-rise-late {
+    animation-delay: 250ms;
+  }
+
+  /*
+   * Прорисовка линии графика. На <path> стоит pathLength="1", поэтому длина
+   * нормализована и дистанцию считать не нужно: 1 → 0.
+   */
+  .auth-line {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: auth-draw 900ms cubic-bezier(0.33, 1, 0.68, 1) 400ms forwards;
+  }
+
+  .auth-line-late {
+    animation-delay: 800ms;
+  }
+
+  /* Заливка под графиком проявляется уже после прорисовки линии. */
+  .auth-area {
+    animation: auth-fade 500ms ease-out 1150ms backwards;
+  }
+
+  /* Очень мягкое парение карточки-метрики, стартует после её появления. */
+  .auth-float {
+    animation: auth-float 6s ease-in-out 1s infinite;
+  }
+
+  /* Фоновые шестиугольники: медленный дрейф на несколько пикселей. */
+  .auth-drift-1 {
+    animation: auth-drift-1 24s ease-in-out infinite alternate;
+  }
+  .auth-drift-2 {
+    animation: auth-drift-2 30s ease-in-out infinite alternate;
+  }
+  .auth-drift-3 {
+    animation: auth-drift-3 19s ease-in-out infinite alternate;
+  }
+
+  /* Однократное кольцо вокруг иконки на экране успеха (не бесконечный пульс). */
+  .auth-ring::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 9999px;
+    border: 2px solid hsl(var(--primary) / 0.45);
+    opacity: 0;
+    animation: auth-ring 900ms ease-out 250ms;
+  }
+}
+
+@keyframes auth-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes auth-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes auth-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes auth-drift-1 {
+  from {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  to {
+    transform: translate3d(-14px, 10px, 0) rotate(7deg);
+  }
+}
+
+@keyframes auth-drift-2 {
+  from {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  to {
+    transform: translate3d(12px, -9px, 0) rotate(-6deg);
+  }
+}
+
+@keyframes auth-drift-3 {
+  from {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  to {
+    transform: translate3d(-8px, -12px, 0) rotate(5deg);
+  }
+}
+
+@keyframes auth-ring {
+  from {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.7);
+  }
+}
+
+/*
+ * ВАЖНО: каждое объявление внутри этого блока обязано быть !important.
+ * В собранном бандле блок оказывается примерно на строке 2248, а вариантные
+ * и адаптивные утилиты идут ПОСЛЕ него (~2277–2982): .active\:scale-\[0.98\],
+ * .aria-\[invalid=true\]\:…, data-[state=open]:animate-in, min-width-медиа.
+ * При равной специфичности выигрывает то, что ниже, поэтому объявление без
+ * !important здесь молча проиграет — и настройка перестанет действовать.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+    /*
+     * Задержки каскада и прорисовки держат стартовое состояние через
+     * fill-mode: backwards — обнуляем их, иначе контент остаётся невидимым
+     * ещё почти секунду после загрузки.
+     */
+    animation-delay: 0ms !important;
+  }
+
+  /* График показываем целиком, а не пустым холстом. */
+  .auth-line {
+    stroke-dasharray: none !important;
+    stroke-dashoffset: 0 !important;
+    animation: none !important;
+  }
+}
