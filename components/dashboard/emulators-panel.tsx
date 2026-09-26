@@ -93,8 +93,16 @@ export function EmulatorsPanel() {
     })
   }
 
-  const fetchEmulators = React.useCallback(async () => {
-    setLoading(true)
+  const emulatorsRef = React.useRef(emulators)
+  emulatorsRef.current = emulators
+
+  const actionLoadingRef = React.useRef(actionLoading)
+  actionLoadingRef.current = actionLoading
+
+  const fetchEmulators = React.useCallback(async (showLoading = false) => {
+    if (showLoading) {
+      setLoading(true)
+    }
     try {
       const res = await fetch("/api/emulators", { cache: "no-store" })
       if (!res.ok) {
@@ -114,22 +122,38 @@ export function EmulatorsPanel() {
       })
     } catch (err: any) {
       setError(err.message || String(err))
-      toast.error("Не удалось загрузить список инстансов", {
-        description: err.message || String(err),
-      })
+      if (showLoading) {
+        toast.error("Не удалось загрузить список инстансов", {
+          description: err.message || String(err),
+        })
+      }
     } finally {
-      setLoading(false)
+      if (showLoading) {
+        setLoading(false)
+      }
     }
   }, [])
 
+  // Initial load with loading state
   React.useEffect(() => {
-    void fetchEmulators()
-    // Если какой-то инстанс в процессе запуска/загрузки, опрашиваем чаще
-    const isAnyBooting = emulators.some((e) => e.state === "running" && !e.bootCompleted)
-    const pollInterval = actionLoading || isAnyBooting ? 5_000 : 15_000
-    const interval = setInterval(fetchEmulators, pollInterval)
-    return () => clearInterval(interval)
-  }, [fetchEmulators, actionLoading, emulators])
+    void fetchEmulators(true)
+  }, [fetchEmulators])
+
+  // Periodic background polling (15s idle, 5s during action or booting)
+  React.useEffect(() => {
+    let timer: NodeJS.Timeout
+
+    const poll = async () => {
+      await fetchEmulators(false)
+      const list = emulatorsRef.current
+      const isAnyBooting = list.some((e) => e.state === "running" && !e.bootCompleted)
+      const nextDelay = actionLoadingRef.current || isAnyBooting ? 5_000 : 15_000
+      timer = setTimeout(() => void poll(), nextDelay)
+    }
+
+    timer = setTimeout(() => void poll(), 15_000)
+    return () => clearTimeout(timer)
+  }, [fetchEmulators])
 
   const handleAction = async (id: string, action: "start" | "stop" | "restart") => {
     setActionLoading(`${action}-${id}`)
@@ -220,7 +244,7 @@ export function EmulatorsPanel() {
           <Button
             variant="outline"
             size="sm"
-            onClick={fetchEmulators}
+            onClick={() => void fetchEmulators(true)}
             disabled={loading}
             className="h-7 text-xs border-amber-500/40 hover:bg-amber-500/20"
           >
@@ -326,7 +350,7 @@ export function EmulatorsPanel() {
           <Button
             variant="outline"
             size="sm"
-            onClick={fetchEmulators}
+            onClick={() => void fetchEmulators(true)}
             disabled={loading}
             className="gap-1.5 h-8"
           >
@@ -334,7 +358,7 @@ export function EmulatorsPanel() {
             Обновить
           </Button>
 
-          <NewEmulatorDialog onCreated={fetchEmulators} />
+          <NewEmulatorDialog onCreated={() => void fetchEmulators(true)} />
         </div>
       </div>
 
