@@ -3,7 +3,9 @@
 import * as React from "react"
 import Link from "next/link"
 import {
+  ActivityIcon,
   AlertCircleIcon,
+  ArrowUpDownIcon,
   CheckCircle2Icon,
   CheckIcon,
   ChevronLeftIcon,
@@ -18,11 +20,14 @@ import {
   InfoIcon,
   KeyRoundIcon,
   Loader2Icon,
+  PhoneIcon,
   PlayIcon,
   RadioIcon,
   RefreshCwIcon,
   SearchIcon,
+  ShieldCheckIcon,
   ShieldIcon,
+  SmartphoneIcon,
   SparklesIcon,
   SquareIcon,
   Trash2Icon,
@@ -30,6 +35,7 @@ import {
   XIcon,
 } from "lucide-react"
 import { toast } from "sonner"
+import { cn } from "@/lib/utils"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -71,8 +77,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type {
   DatabaseStatsDto,
-  MessageMonitorStatusDto,
-  MonitoredMessageDto,
   TaskDetailDto,
   TaskStatus,
   TaskSummaryDto,
@@ -82,6 +86,7 @@ import type {
   ViberMember,
   ViberMembersResponse,
   ViberParserStatus,
+  UsersSyncResult,
 } from "@/lib/viber-parser/types"
 import { messageHasMedia, messagePreviewText } from "@/lib/viber-parser/message-display"
 import {
@@ -120,11 +125,7 @@ import {
  * Список участников бывает на тысячи строк: браузер не должен держать их все
  * в DOM. Фильтры, экспорт и копирование по-прежнему работают над полным списком.
  */
-/** Инстанс по умолчанию — тот, на который смотрит ADB_HOST/ADB_PORT. */
-const MONITOR_DEFAULT_DEVICE_ID = "default"
-/** Подпись строки реестра, которой нет на инстансе: включить её обратно нельзя. */
-const MONITOR_MISSING_ON_DEVICE_HINT = "Нет на инстансе — можно только снять с мониторинга"
-const MEMBERS_PAGE_SIZE_OPTIONS = [50, 100, 250] as const
+const MEMBERS_PAGE_SIZE_OPTIONS = [10, 15, 25, 50, 100, 250] as const
 const DEFAULT_MEMBERS_PAGE_SIZE = 50
 const MEMBERS_PAGE_SIZE_STORAGE_KEY = "viber-members-page-size"
 
@@ -336,7 +337,7 @@ async function request<T>(
 }
 
 function groupName(group: ViberGroup) {
-  return group.name || `Чат ${group.conversationId}`
+  return group.name || group.groupName || `Чат ${group.conversationId}`
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -382,7 +383,7 @@ export interface ViberParserPanelProps {
 }
 
 export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
-  const [activeTab, setActiveTab] = React.useState<"collect" | "database" | "history" | "monitor">("collect")
+  const [activeTab, setActiveTab] = React.useState<"collect" | "database" | "history">("collect")
 
   const withDevice = React.useCallback(
     (path: string) => {
@@ -391,19 +392,6 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
       return `${path}${separator}deviceId=${encodeURIComponent(deviceId)}`
     },
     [deviceId]
-  )
-
-  /**
-   * Мониторинг всегда называет инстанс, даже когда страница открыта без него:
-   * иначе список групп приходит с одного эмулятора, а лента — со всех сразу.
-   */
-  const instance = deviceId?.trim() || MONITOR_DEFAULT_DEVICE_ID
-  const withMonitorDevice = React.useCallback(
-    (path: string) => {
-      const separator = path.includes("?") ? "&" : "?"
-      return `${path}${separator}deviceId=${encodeURIComponent(instance)}`
-    },
-    [instance]
   )
 
   // Состояние парсера и активной задачи
@@ -423,16 +411,24 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
   const [groupsError, setGroupsError] = React.useState<string | null>(null)
   const [selectedGroupId, setSelectedGroupId] = React.useState<string | null>(null)
   const [restartAppAfterCollect, setRestartAppAfterCollect] = React.useState(true)
+  const [twoPassCollect, setTwoPassCollect] = React.useState(true)
   const [isStartingCollect, setIsStartingCollect] = React.useState(false)
   const [isFastLoading, setIsFastLoading] = React.useState(false)
   const [isStoppingTask, setIsStoppingTask] = React.useState(false)
+  const [syncingGroupId, setSyncingGroupId] = React.useState<string | null>(null)
 
   // Участники
   const [members, setMembers] = React.useState<ViberMembersResponse | null>(null)
   const [membersLoading, setMembersLoading] = React.useState(false)
   const [membersError, setMembersError] = React.useState<string | null>(null)
+  const [membersSource, setMembersSource] = React.useState<"supabase" | "emulator">("supabase")
   const [memberSearchQuery, setMemberSearchQuery] = React.useState("")
-  const [memberRoleFilter, setMemberRoleFilter] = React.useState<"all" | "decoded" | "undecoded" | "admins">("all")
+  const [memberRoleFilter, setMemberRoleFilter] = React.useState<
+    "all" | "decoded" | "undecoded" | "online" | "recent_24h" | "recent_7d" | "admins"
+  >("all")
+  const [memberSort, setMemberSort] = React.useState<
+    "activity" | "phone" | "name" | "role" | "default"
+  >("activity")
   const [hideDuplicates, setHideDuplicates] = React.useState(true)
   const [membersPage, setMembersPage] = React.useState(1)
   const [membersPageSize, setMembersPageSize] = React.useState(DEFAULT_MEMBERS_PAGE_SIZE)
@@ -449,13 +445,6 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
   const [tasksLoading, setTasksLoading] = React.useState(false)
   const [selectedHistoryTask, setSelectedHistoryTask] = React.useState<TaskDetailDto | null>(null)
   const [historyTaskModalOpen, setHistoryTaskModalOpen] = React.useState(false)
-
-  // Мониторинг сообщений
-  const [monitorStatus, setMonitorStatus] = React.useState<MessageMonitorStatusDto | null>(null)
-  const [monitoredMessages, setMonitoredMessages] = React.useState<MonitoredMessageDto[]>([])
-  const [monitorLoading, setMonitorLoading] = React.useState(false)
-  const [monitorToggling, setMonitorToggling] = React.useState(false)
-  const [togglingMonitorGroupId, setTogglingMonitorGroupId] = React.useState<number | null>(null)
 
   // Идентификатор отслеживаемой задачи держим в ref, чтобы цикл опроса
   // не перезапускался на каждое обновление деталей.
@@ -681,13 +670,18 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
   const refreshMembers = React.useCallback(async (
     groupId: string,
     signal?: AbortSignal,
-    options: { force?: boolean } = {}
+    options: { force?: boolean; source?: "supabase" | "emulator" } = {}
   ) => {
     setMembersLoading(true)
     setMembersError(null)
+    const effectiveSource = options.source ?? membersSource
     try {
+      const qParams = new URLSearchParams()
+      if (options.force) qParams.set("refresh", "1")
+      if (effectiveSource) qParams.set("source", effectiveSource)
+      const q = qParams.toString() ? `?${qParams.toString()}` : ""
       const response = await request<ViberMembersResponse>(
-        withDevice(withRefreshFlag(`groups/${groupId}/members`, options.force)),
+        withDevice(`groups/${groupId}/members${q}`),
         { signal }
       )
       setMembers(response)
@@ -699,7 +693,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     } finally {
       if (!signal?.aborted) setMembersLoading(false)
     }
-  }, [withDevice])
+  }, [withDevice, membersSource])
 
   // 4. Загрузка статистики базы данных
   const refreshDbStats = React.useCallback(async (signal?: AbortSignal, options: { force?: boolean } = {}) => {
@@ -730,26 +724,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     }
   }, [withDevice])
 
-  // 6. Загрузка статуса мониторинга сообщений
-  const refreshMonitor = React.useCallback(async (signal?: AbortSignal) => {
-    setMonitorLoading(true)
-    try {
-      const [mStatus, mList] = await Promise.all([
-        request<MessageMonitorStatusDto>(withMonitorDevice("messages/monitor/status"), { signal }),
-        request<MonitoredMessageDto[]>(withMonitorDevice("messages/monitored?limit=15"), { signal }),
-      ])
-      setMonitorStatus({
-        ...mStatus,
-        groups: mStatus.groups ?? [],
-        liveWatch: mStatus.liveWatch ?? false,
-      })
-      setMonitoredMessages(mList)
-    } catch {
-      // ignore
-    } finally {
-      if (!signal?.aborted) setMonitorLoading(false)
-    }
-  }, [withMonitorDevice])
+
 
   // 7. Дотягивание финального состояния задачи.
   // Как только задача перешла в терминальный статус, повторяем запрос деталей,
@@ -815,15 +790,14 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     void refreshGroups()
     void refreshDbStats()
     void refreshTasks()
-    void refreshMonitor()
-  }, [refreshGroups, refreshDbStats, refreshTasks, refreshMonitor])
+  }, [refreshGroups, refreshDbStats, refreshTasks])
 
   // Загрузка участников при выборе группы
   React.useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId
     if (!selectedGroupId) return
-    void refreshMembers(selectedGroupId)
-  }, [selectedGroupId, refreshMembers])
+    void refreshMembers(selectedGroupId, undefined, { source: membersSource })
+  }, [selectedGroupId, membersSource, refreshMembers])
 
   const trackedTaskId = status?.taskId ?? activeTaskDetail?.id ?? null
   const trackedTaskTerminal =
@@ -917,7 +891,8 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     if (!isCompletionAnnounceable(detail, finalizedTasksRef.current.has(detail.id))) return
     reactedTasksRef.current.add(detail.id)
 
-    if (seenRunningTasksRef.current.delete(detail.id)) {
+    const wasRunning = Boolean(seenRunningTasksRef.current.delete(detail.id))
+    if (wasRunning) {
       const notice = describeTaskCompletion(detail)
       if (notice) {
         const options = notice.description ? { description: notice.description } : undefined
@@ -927,13 +902,65 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
       }
     }
 
-    // Данные только что изменились — читаем мимо серверного кеша
-    void refreshTasks()
-    void refreshGroups(undefined, { force: true })
-    if (selectedGroupIdRef.current) {
-      void refreshMembers(selectedGroupIdRef.current, undefined, { force: true })
+    // Автоматическая выгрузка в Supabase при успешном завершении задачи сбора (только если задача реально выполнялась в этой сессии)
+    if (wasRunning && detail.status === "ready") {
+      const syncTaskToSupabase = async () => {
+        try {
+          const syncRes = await request<UsersSyncResult>(`users/sync/task/${detail.id}`, {
+            method: "POST",
+          })
+          if (syncRes.success) {
+            toast.success("Участники выгружены в базу данных (Supabase)", {
+              description: `Синхронизировано ${syncRes.usersUpserted} уч. для группы «${syncRes.group || detail.result?.group || ""}»`,
+            })
+          }
+        } catch (err: unknown) {
+          console.warn("Auto-sync to Supabase warning:", err)
+        } finally {
+          void refreshTasks()
+          void refreshGroups(undefined, { force: true })
+          if (selectedGroupIdRef.current) {
+            void refreshMembers(selectedGroupIdRef.current, undefined, { force: true })
+          }
+          void refreshDbStats(undefined, { force: true })
+        }
+      }
+      void syncTaskToSupabase()
+    } else if (wasRunning) {
+      // Данные только что изменились — читаем мимо серверного кеша
+      void refreshTasks()
+      void refreshGroups(undefined, { force: true })
+      if (selectedGroupIdRef.current) {
+        void refreshMembers(selectedGroupIdRef.current, undefined, { force: true })
+      }
     }
-  }, [activeTaskDetail, finalFetchTick, refreshGroups, refreshMembers, refreshTasks])
+  }, [activeTaskDetail, finalFetchTick, refreshDbStats, refreshGroups, refreshMembers, refreshTasks, request])
+
+  const handleManualSyncToDb = React.useCallback(
+    async (conversationId: number, groupTitle?: string | null) => {
+      setSyncingGroupId(String(conversationId))
+      try {
+        const res = await request<UsersSyncResult>(`users/sync/group/${conversationId}`, {
+          method: "POST",
+        })
+        if (res.success) {
+          toast.success(`Группа «${groupTitle || res.group || conversationId}» выгружена в базу данных`, {
+            description: `Записано/обновлено ${res.usersUpserted} участников в Supabase`,
+          })
+        }
+        await refreshGroups(undefined, { force: true })
+        await refreshDbStats(undefined, { force: true })
+        if (selectedGroupIdRef.current) {
+          await refreshMembers(selectedGroupIdRef.current, undefined, { force: true })
+        }
+      } catch (err: unknown) {
+        toast.error(`Ошибка выгрузки в базу данных: ${errorMessage(err)}`)
+      } finally {
+        setSyncingGroupId(null)
+      }
+    },
+    [refreshDbStats, refreshGroups, refreshMembers, request]
+  )
 
   const selectedGroup = React.useMemo(
     () => groups.find((g) => String(g.conversationId) === selectedGroupId) ?? null,
@@ -956,6 +983,8 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
         body: {
           group: target,
           restartApp: restartAppAfterCollect,
+          twoPass: twoPassCollect,
+          passesCount: twoPassCollect ? 5 : 1,
           allowPartial: true,
           deviceId: deviceId || undefined,
         },
@@ -1093,54 +1122,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     }
   }
 
-  // Управление монитором сообщений
-  const handleToggleMonitor = async () => {
-    setMonitorToggling(true)
-    try {
-      if (monitorStatus?.isRunning) {
-        await request("messages/monitor/stop", { method: "POST" })
-        toast.info("Опрос остановлен. Курсоры групп сохранены.")
-      } else {
-        await request("messages/monitor/start", {
-          method: "POST",
-          body: { deviceId: instance },
-        })
-        toast.success("Мониторинг сообщений запущен")
-      }
-      await refreshMonitor()
-    } catch (err) {
-      toast.error("Ошибка управления монитором", { description: errorMessage(err) })
-    } finally {
-      setMonitorToggling(false)
-    }
-  }
 
-  const handleToggleMonitorGroup = async (
-    conversationId: number,
-    enabled: boolean,
-    groupKey: string | null = null
-  ) => {
-    setTogglingMonitorGroupId(conversationId)
-    try {
-      // Инстанс и глобальный ключ группы идут телом: локальный ID в списке
-      // может принадлежать другому аккаунту организации.
-      const path = enabled
-        ? `messages/monitor/groups/${conversationId}/enable`
-        : withMonitorDevice(`messages/monitor/groups/${conversationId}/disable`)
-      await request(path, {
-        method: "POST",
-        body: enabled
-          ? { deviceId: instance, ...(groupKey ? { groupKey } : {}) }
-          : undefined,
-      })
-      toast.success(enabled ? "Группа включена в мониторинг" : "Группа снята с мониторинга")
-      await refreshMonitor()
-    } catch (err) {
-      toast.error("Не удалось изменить мониторинг группы", { description: errorMessage(err) })
-    } finally {
-      setTogglingMonitorGroupId(null)
-    }
-  }
 
   // Экспорт участников
   const handleExportJson = () => {
@@ -1244,60 +1226,148 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     toast.success(`Скопировано ${uniquePhones.length} уникальных номеров в буфер обмена`)
   }
 
-  // Фильтрация и дедупликация участников
+  const handleMembersSourceChange = (newSource: "supabase" | "emulator") => {
+    setMembersSource(newSource)
+    if (selectedGroupId) {
+      void refreshMembers(selectedGroupId, undefined, { source: newSource })
+    }
+  }
+
+  // Сводные метрики участников группы
+  const totalMembersCount = members?.count ?? members?.members.length ?? 0
+  const decodedMembersCount = React.useMemo(() => {
+    return (members?.members ?? []).filter(
+      (m) =>
+        m.isDecoded ??
+        (!m.phoneNumber.toLowerCase().startsWith("em") && m.phoneNumber !== "Ожидает дешифровки")
+    ).length
+  }, [members])
+  const decodedPercent =
+    totalMembersCount > 0 ? ((decodedMembersCount / totalMembersCount) * 100).toFixed(1) : "0"
+  const onlineMembersCount = React.useMemo(() => {
+    return (members?.members ?? []).filter((m) => m.isOnline).length
+  }, [members])
+  const adminsCount = React.useMemo(() => {
+    return (members?.members ?? []).filter(
+      (m) => m.roleLabel === "admin" || m.roleLabel === "superadmin"
+    ).length
+  }, [members])
+
+  // Фильтрация, сортировка и дедупликация участников
   const filteredMembers = React.useMemo(() => {
     const list = members?.members ?? []
     const q = memberSearchQuery.trim().toLowerCase()
 
     const filtered = list.filter((m) => {
-      // Role / decoded filter
-      const isDecoded = m.isDecoded ?? (!m.phoneNumber.toLowerCase().startsWith("em") && m.phoneNumber !== "Ожидает дешифровки")
+      // Role / decoded / online filter
+      const isDecoded =
+        m.isDecoded ??
+        (!m.phoneNumber.toLowerCase().startsWith("em") &&
+          m.phoneNumber !== "Ожидает дешифровки")
+
       if (memberRoleFilter === "decoded" && !isDecoded) return false
       if (memberRoleFilter === "undecoded" && isDecoded) return false
-      if (memberRoleFilter === "admins" && m.roleLabel !== "admin" && m.roleLabel !== "superadmin") return false
+      if (memberRoleFilter === "admins" && m.roleLabel !== "admin" && m.roleLabel !== "superadmin")
+        return false
+      if (memberRoleFilter === "online" && !m.isOnline) return false
+
+      if (memberRoleFilter === "recent_24h") {
+        if (m.isOnline) {
+          // Онлайн считается активным
+        } else if (m.lastSeen) {
+          const t = Date.parse(m.lastSeen)
+          if (isNaN(t) || Date.now() - t > 24 * 3600 * 1000) return false
+        } else {
+          return false
+        }
+      }
+
+      if (memberRoleFilter === "recent_7d") {
+        if (m.isOnline) {
+          // Онлайн считается активным
+        } else if (m.lastSeen) {
+          const t = Date.parse(m.lastSeen)
+          if (isNaN(t) || Date.now() - t > 7 * 24 * 3600 * 1000) return false
+        } else {
+          return false
+        }
+      }
 
       if (!q) return true
       const phoneMatch = m.phoneNumber.toLowerCase().includes(q)
       const nameMatch = m.name ? m.name.toLowerCase().includes(q) : false
       const rawMatch = m.rawNumber ? m.rawNumber.toLowerCase().includes(q) : false
-      return phoneMatch || nameMatch || rawMatch
+      const idMatch = m.memberId ? m.memberId.toLowerCase().includes(q) : false
+      return phoneMatch || nameMatch || rawMatch || idMatch
     })
 
-    if (!hideDuplicates) {
-      return filtered
-    }
+    // Дедупликация
+    let workingList = filtered
+    if (hideDuplicates) {
+      const seenPhones = new Set<string>()
+      const seenMemberIds = new Set<string>()
+      const result: typeof filtered = []
 
-    const seenPhones = new Set<string>()
-    const seenMemberIds = new Set<string>()
-    const result: typeof filtered = []
-
-    for (const m of filtered) {
-      // Нормализация номера
-      let normPhone: string | null = null
-      const rawP = m.phoneNumber || m.rawNumber
-      if (rawP && !rawP.toLowerCase().startsWith("em") && rawP !== "Ожидает дешифровки") {
-        const digits = rawP.replace(/[^\d+]/g, "")
-        if (digits) {
-          normPhone = digits.startsWith("+") ? digits : `+${digits}`
+      for (const m of filtered) {
+        let normPhone: string | null = null
+        const rawP = m.phoneNumber || m.rawNumber
+        if (rawP && !rawP.toLowerCase().startsWith("em") && rawP !== "Ожидает дешифровки") {
+          const digits = rawP.replace(/[^\d+]/g, "")
+          if (digits) {
+            normPhone = digits.startsWith("+") ? digits : `+${digits}`
+          }
         }
-      }
 
-      const memId = m.memberId?.trim() && !m.memberId.startsWith("em:") ? m.memberId.trim() : null
+        const memId = m.memberId?.trim() && !m.memberId.startsWith("em:") ? m.memberId.trim() : null
 
-      if (normPhone && seenPhones.has(normPhone)) {
-        continue
-      }
-      if (memId && seenMemberIds.has(memId)) {
-        continue
-      }
+        if (normPhone && seenPhones.has(normPhone)) {
+          continue
+        }
+        if (memId && seenMemberIds.has(memId)) {
+          continue
+        }
 
-      if (normPhone) seenPhones.add(normPhone)
-      if (memId) seenMemberIds.add(memId)
-      result.push(m)
+        if (normPhone) seenPhones.add(normPhone)
+        if (memId) seenMemberIds.add(memId)
+        result.push(m)
+      }
+      workingList = result
     }
 
-    return result
-  }, [members, memberSearchQuery, memberRoleFilter, hideDuplicates])
+    // Сортировка
+    return [...workingList].sort((a, b) => {
+      if (memberSort === "activity") {
+        if (a.isOnline && !b.isOnline) return -1
+        if (!a.isOnline && b.isOnline) return 1
+        const aTime = a.lastSeen ? Date.parse(a.lastSeen) : 0
+        const bTime = b.lastSeen ? Date.parse(b.lastSeen) : 0
+        return bTime - aTime
+      }
+      if (memberSort === "phone") {
+        const aDecoded =
+          a.isDecoded ??
+          (!a.phoneNumber.toLowerCase().startsWith("em") && a.phoneNumber !== "Ожидает дешифровки")
+        const bDecoded =
+          b.isDecoded ??
+          (!b.phoneNumber.toLowerCase().startsWith("em") && b.phoneNumber !== "Ожидает дешифровки")
+        if (aDecoded && !bDecoded) return -1
+        if (!aDecoded && bDecoded) return 1
+        return (a.phoneNumber || "").localeCompare(b.phoneNumber || "")
+      }
+      if (memberSort === "name") {
+        const aName = a.name?.trim() || ""
+        const bName = b.name?.trim() || ""
+        if (aName && !bName) return -1
+        if (!aName && bName) return 1
+        return aName.localeCompare(bName, "ru", { sensitivity: "base" })
+      }
+      if (memberSort === "role") {
+        const roleRank = (role?: string) => (role === "superadmin" ? 1 : role === "admin" ? 2 : 3)
+        return roleRank(a.roleLabel) - roleRank(b.roleLabel)
+      }
+      return 0
+    })
+  }, [members, memberSearchQuery, memberRoleFilter, memberSort, hideDuplicates])
 
   // Размер страницы читаем уже на клиенте: на сервере хранилища нет,
   // а расхождение разметки при гидратации нам не нужно.
@@ -1309,7 +1379,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
   // Новый набор строк всегда показываем с первой страницы
   React.useEffect(() => {
     setMembersPage(1)
-  }, [members, memberSearchQuery, memberRoleFilter, hideDuplicates, selectedGroupId])
+  }, [members, memberSearchQuery, memberRoleFilter, memberSort, hideDuplicates, selectedGroupId])
 
   const membersTotalPages = Math.max(1, Math.ceil(filteredMembers.length / membersPageSize))
   // Список мог сократиться под текущей страницей — подрезаем её при рендере,
@@ -1318,6 +1388,11 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
   const membersOffset = (membersCurrentPage - 1) * membersPageSize
   const membersRangeStart = filteredMembers.length === 0 ? 0 : membersOffset + 1
   const membersRangeEnd = Math.min(membersOffset + membersPageSize, filteredMembers.length)
+
+  const [jumpPageInput, setJumpPageInput] = React.useState(String(membersCurrentPage))
+  React.useEffect(() => {
+    setJumpPageInput(String(membersCurrentPage))
+  }, [membersCurrentPage])
 
   const pagedMembers = React.useMemo(
     () => filteredMembers.slice(membersOffset, membersOffset + membersPageSize),
@@ -1353,49 +1428,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     now: connectionNow,
   })
 
-  const monitorGroupRows = React.useMemo(() => {
-    const onInstance = (monitorStatus?.groups ?? []).filter(
-      (item) => (item.deviceId?.trim() || MONITOR_DEFAULT_DEVICE_ID) === instance
-    )
-    const monitoredById = new Map(onInstance.map((item) => [item.conversationId, item]))
-    const monitoredByKey = new Map(
-      onInstance.filter((item) => Boolean(item.groupKey)).map((item) => [String(item.groupKey), item])
-    )
-    const rows = groups
-      .filter((group) => group.conversationType !== 0)
-      .map((group) => {
-        const key =
-          group.groupId === null || group.groupId === undefined
-            ? null
-            : String(group.groupId).trim() || null
-        const match =
-          (key ? monitoredByKey.get(key) : undefined) ?? monitoredById.get(group.conversationId)
-        return {
-          conversationId: match?.conversationId ?? group.conversationId,
-          groupKey: key ?? match?.groupKey ?? null,
-          name: groupName(group),
-          enabled: match?.enabled ?? false,
-          missingOnDevice: false,
-        }
-      })
-    const seenIds = new Set(rows.map((row) => row.conversationId))
-    const seenNames = new Set(rows.map((row) => (row.name || '').trim().toLowerCase()))
-    for (const item of onInstance) {
-      if (seenIds.has(item.conversationId)) continue
-      if (item.name && seenNames.has(item.name.trim().toLowerCase())) continue
-      // Группы нет на инстансе: включить её заново нельзя — сервер ответит 404.
-      // Выключенную прячем, включённую оставляем, чтобы было чем её снять.
-      if (!item.enabled) continue
-      rows.push({
-        conversationId: item.conversationId,
-        groupKey: item.groupKey ?? null,
-        name: item.name || `Группа ${item.conversationId}`,
-        enabled: item.enabled,
-        missingOnDevice: true,
-      })
-    }
-    return rows.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name, "ru"))
-  }, [groups, monitorStatus?.groups, instance])
+
 
   const stepTimeline = React.useMemo(
     () => buildStepTimeline(activeTaskDetail, extractStepName(status?.currentStep)),
@@ -1553,13 +1586,6 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
               </Badge>
             )}
           </TabsTrigger>
-          <TabsTrigger value="monitor" className="gap-2 py-2 text-xs sm:text-sm font-medium">
-            <RadioIcon className="size-4" />
-            <span>Монитор сообщений</span>
-            {monitorStatus?.isRunning && (
-              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
-            )}
-          </TabsTrigger>
         </TabsList>
 
         {/* ----------------- ВКЛАДКА 1: СБОР УЧАСТНИКОВ ----------------- */}
@@ -1590,18 +1616,24 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                       <SelectValue placeholder="Выберите группу" />
                     </SelectTrigger>
                     <SelectContent>
-                      {groups.map((g) => (
-                        <SelectItem key={g.conversationId} value={String(g.conversationId)}>
-                          <div className="flex items-center justify-between gap-2 w-full">
-                            <span className="font-medium truncate max-w-[200px]">{groupName(g)}</span>
-                            <span className="text-muted-foreground font-mono text-[11px]">
-                              ({(g.memberCount ?? 0).toLocaleString("ru-RU")} уч.
-                              {g.storedPhoneCount ? ` • в базе ${g.storedPhoneCount.toLocaleString("ru-RU")} ном.` : ""}
-                              )
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
+                      {groups.map((g) => {
+                        const emuCount = g.emulatorParticipantCount ?? g.memberCount ?? 0
+                        const dbCount = g.dbParticipantCount ?? g.storedParticipantCount ?? 0
+                        return (
+                          <SelectItem key={g.conversationId} value={String(g.conversationId)}>
+                            <div className="flex items-center justify-between gap-3 w-full">
+                              <span className="font-medium truncate max-w-[200px]">{groupName(g)}</span>
+                              <span className="text-muted-foreground font-mono text-[11px] shrink-0">
+                                📱 {emuCount.toLocaleString("ru-RU")} уч.
+                                <span className="mx-1">•</span>
+                                <span className={dbCount > 0 ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}>
+                                  💾 {dbCount.toLocaleString("ru-RU")} в базе
+                                </span>
+                              </span>
+                            </div>
+                          </SelectItem>
+                        )
+                      })}
                     </SelectContent>
                   </Select>
                   {groupsError ? (
@@ -1610,8 +1642,22 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                 </div>
 
                 {/* Дополнительные параметры */}
-                <div className="flex flex-col justify-end">
-                  <div className="flex items-center space-x-2 py-2">
+                <div className="flex flex-col justify-end gap-2 py-1">
+                  <div className="flex items-center space-x-2">
+                    <Switch
+                      id="triple-pass"
+                      checked={twoPassCollect}
+                      onCheckedChange={setTwoPassCollect}
+                      disabled={isTaskRunning}
+                    />
+                    <Label htmlFor="triple-pass" className="text-xs cursor-pointer flex items-center gap-1.5">
+                      <span>Глубокий сбор (5 циклов с дедупликацией)</span>
+                      <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/10">
+                        x5
+                      </Badge>
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
                     <Switch
                       id="restart-app"
                       checked={restartAppAfterCollect}
@@ -1625,8 +1671,79 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                 </div>
               </div>
 
+              {/* Информация об участниках выбранной группы: в эмуляторе и в базе данных */}
+              {selectedGroup && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-lg border bg-muted/30 text-xs">
+                  <div className="flex items-center justify-between p-2.5 rounded-md border bg-card/60">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                        <SmartphoneIcon className="size-4" />
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-muted-foreground font-medium">В базе эмулятора</div>
+                        <div className="text-sm font-bold font-mono text-foreground">
+                          {(selectedGroup.emulatorParticipantCount ?? selectedGroup.memberCount ?? 0).toLocaleString("ru-RU")}{" "}
+                          <span className="text-xs font-normal text-muted-foreground">участников</span>
+                        </div>
+                      </div>
+                    </div>
+                    <Badge variant="outline" className="text-[10px] border-blue-500/30 text-blue-700 dark:text-blue-400 bg-blue-500/10">
+                      Viber SQLite
+                    </Badge>
+                  </div>
+
+                  <div className="flex items-center justify-between p-2.5 rounded-md border bg-card/60">
+                    <div className="flex items-center gap-2.5">
+                      <div className="p-1.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                        <DatabaseIcon className="size-4" />
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-muted-foreground font-medium">В базе данных</div>
+                        <div className="text-sm font-bold font-mono text-foreground">
+                          {(selectedGroup.dbParticipantCount ?? selectedGroup.storedParticipantCount ?? 0).toLocaleString("ru-RU")}{" "}
+                          <span className="text-xs font-normal text-muted-foreground">участников</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-right flex flex-col items-end gap-1">
+                      <div className="flex items-center gap-1.5">
+                        {(selectedGroup.dbParticipantCount ?? selectedGroup.storedParticipantCount ?? 0) > 0 ? (
+                          <Badge variant="outline" className="text-[10px] border-emerald-500/30 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10">
+                            {selectedGroup.lastSyncedAt ? "Синхронизировано" : "В базе"}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                            Не выгружено
+                          </Badge>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={syncingGroupId === String(selectedGroup.conversationId)}
+                          onClick={() => handleManualSyncToDb(selectedGroup.conversationId, selectedGroup.name)}
+                          className="h-6 text-[10px] px-2 gap-1 border-emerald-500/30 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-500/10 hover:text-emerald-800 dark:hover:text-emerald-300"
+                          title="Выгрузить участников группы в Supabase"
+                        >
+                          {syncingGroupId === String(selectedGroup.conversationId) ? (
+                            <Loader2Icon className="size-3 animate-spin" />
+                          ) : (
+                            <RefreshCwIcon className="size-3" />
+                          )}
+                          Выгрузить в БД
+                        </Button>
+                      </div>
+                      {selectedGroup.lastSyncedAt && (
+                        <span className="text-[9px] text-muted-foreground font-mono">
+                          {new Date(selectedGroup.lastSyncedAt).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Баннер о наличии сохраненных данных в базе */}
-              {selectedGroup?.hasStoredData && (
+              {selectedGroup && (selectedGroup.dbParticipantCount ?? selectedGroup.storedParticipantCount ?? 0) > 0 && (
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-800 dark:text-emerald-200">
                   <div className="flex items-start sm:items-center gap-2.5">
                     <DatabaseIcon className="size-4 shrink-0 mt-0.5 sm:mt-0 text-emerald-600 dark:text-emerald-400" />
@@ -1634,7 +1751,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                       <span>
                         В базе уже есть сохранённые данные:{" "}
                         <strong className="font-semibold text-foreground">
-                          {(selectedGroup.storedParticipantCount ?? selectedGroup.memberCount).toLocaleString("ru-RU")}
+                          {(selectedGroup.dbParticipantCount ?? selectedGroup.storedParticipantCount ?? 0).toLocaleString("ru-RU")}
                         </strong>{" "}
                         уч.
                         {selectedGroup.storedPhoneCount ? (
@@ -1698,8 +1815,26 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                 </div>
 
                 {selectedGroup && (
-                  <div className="text-xs text-muted-foreground">
-                    Выбрано: <span className="font-semibold text-foreground">{groupName(selectedGroup)}</span> (ID {selectedGroup.conversationId})
+                  <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-x-2">
+                    <span>
+                      Выбрано: <span className="font-semibold text-foreground">{groupName(selectedGroup)}</span> (ID {selectedGroup.conversationId})
+                    </span>
+                    <span>•</span>
+                    <span>
+                      Эмулятор:{" "}
+                      <strong className="text-foreground">
+                        {(selectedGroup.emulatorParticipantCount ?? selectedGroup.memberCount ?? 0).toLocaleString("ru-RU")}
+                      </strong>{" "}
+                      уч.
+                    </span>
+                    <span>•</span>
+                    <span>
+                      В базе:{" "}
+                      <strong className="text-foreground">
+                        {(selectedGroup.dbParticipantCount ?? selectedGroup.storedParticipantCount ?? 0).toLocaleString("ru-RU")}
+                      </strong>{" "}
+                      уч.
+                    </span>
                   </div>
                 )}
               </div>
@@ -1936,13 +2071,96 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
             </Card>
           )}
 
+          {/* Информационные карточки участников */}
+          {selectedGroup && (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="rounded-xl border bg-card p-3.5 shadow-xs transition-colors">
+                <div className="flex items-center justify-between text-muted-foreground text-xs">
+                  <span>Всего участников</span>
+                  <UsersIcon className="size-4 text-muted-foreground/70" />
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold tabular-nums text-foreground">
+                    {membersLoading ? "…" : totalMembersCount.toLocaleString("ru-RU")}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">В текущей группе</p>
+              </div>
+
+              <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3.5 shadow-xs transition-colors">
+                <div className="flex items-center justify-between text-xs text-emerald-700 dark:text-emerald-400">
+                  <span>С номерами телефонов</span>
+                  <PhoneIcon className="size-4" />
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold tabular-nums text-emerald-700 dark:text-emerald-400">
+                    {membersLoading ? "…" : decodedMembersCount.toLocaleString("ru-RU")}
+                  </span>
+                  <span className="text-xs font-medium text-emerald-600/80 dark:text-emerald-400/80 tabular-nums">
+                    ({decodedPercent}%)
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[11px] text-emerald-600/70 dark:text-emerald-400/70">Доступны для связи</p>
+              </div>
+
+              <div className="rounded-xl border bg-card p-3.5 shadow-xs transition-colors">
+                <div className="flex items-center justify-between text-muted-foreground text-xs">
+                  <span className="flex items-center gap-1.5 font-medium">
+                    <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+                    В сети сейчас
+                  </span>
+                  <ActivityIcon className="size-4 text-emerald-600" />
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold tabular-nums text-foreground">
+                    {membersLoading ? "…" : onlineMembersCount.toLocaleString("ru-RU")}
+                  </span>
+                  {totalMembersCount > 0 && (
+                    <span className="text-xs text-muted-foreground tabular-nums">
+                      ({((onlineMembersCount / totalMembersCount) * 100).toFixed(1)}%)
+                    </span>
+                  )}
+                </div>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Активны в Viber</p>
+              </div>
+
+              <div className="rounded-xl border bg-card p-3.5 shadow-xs transition-colors">
+                <div className="flex items-center justify-between text-muted-foreground text-xs">
+                  <span>Администраторы</span>
+                  <ShieldCheckIcon className="size-4 text-purple-600 dark:text-purple-400" />
+                </div>
+                <div className="mt-1.5 flex items-baseline gap-1.5">
+                  <span className="text-2xl font-bold tabular-nums text-foreground">
+                    {membersLoading ? "…" : adminsCount.toLocaleString("ru-RU")}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">Суперадмины и админы</p>
+              </div>
+            </div>
+          )}
+
           {/* Таблица участников выбранной группы */}
           <Card>
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 space-y-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <CardTitle className="text-base font-semibold">Участники группы</CardTitle>
-                  <CardDescription className="text-xs">
+                  <div className="flex items-center gap-2">
+                    <CardTitle className="text-base font-semibold">Участники группы</CardTitle>
+                    {members?.source && (
+                      <Badge
+                        variant="secondary"
+                        className={cn(
+                          "text-[10px] px-2 py-0.5 font-normal",
+                          members.source === "supabase"
+                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/20"
+                            : "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20"
+                        )}
+                      >
+                        {members.source === "supabase" ? "Supabase Cloud" : "Эмулятор SQLite"}
+                      </Badge>
+                    )}
+                  </div>
+                  <CardDescription className="text-xs mt-0.5">
                     {selectedGroup ? (
                       <>
                         Всего участников: {(members?.count ?? 0).toLocaleString("ru-RU")}
@@ -1958,8 +2176,51 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                   </CardDescription>
                 </div>
 
+                {/* Переключатель источника данных: Supabase vs Эмулятор */}
+                <div className="flex items-center rounded-lg border bg-muted/60 p-0.5 text-xs self-start sm:self-auto">
+                  <button
+                    type="button"
+                    onClick={() => handleMembersSourceChange("supabase")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-all text-xs",
+                      membersSource === "supabase"
+                        ? "bg-background text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <DatabaseIcon className="size-3 text-emerald-600 dark:text-emerald-400" />
+                    <span>База данных (Supabase)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleMembersSourceChange("emulator")}
+                    className={cn(
+                      "flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition-all text-xs",
+                      membersSource === "emulator"
+                        ? "bg-background text-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <SmartphoneIcon className="size-3 text-blue-600 dark:text-blue-400" />
+                    <span>Эмулятор (Viber SQLite)</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Уведомление о фоллбэке на эмулятор */}
+              {members?.source === "emulator" && membersSource === "supabase" && (
+                <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                  <InfoIcon className="size-3.5 shrink-0" />
+                  <span>
+                    Показаны данные из эмулятора: в базе Supabase для этой группы пока нет записей. Вы можете нажать «Выгрузить в БД» выше.
+                  </span>
+                </div>
+              )}
+
+              {/* Панель фильтров, поиска, сортировки и экспорта */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-border/40">
                 <div className="flex flex-wrap items-center gap-2">
-                  <div className="relative w-40 sm:w-56">
+                  <div className="relative w-44 sm:w-56">
                     <SearchIcon className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
                     <Input
                       placeholder="Поиск по имени/номеру…"
@@ -1969,18 +2230,40 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                     />
                   </div>
 
+                  {/* Фильтр статуса/роли */}
                   <Select
                     value={memberRoleFilter}
                     onValueChange={(v) => setMemberRoleFilter(v as typeof memberRoleFilter)}
                   >
-                    <SelectTrigger className="w-36 h-8 text-xs">
+                    <SelectTrigger className="w-44 h-8 text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">Все ({members?.count ?? 0})</SelectItem>
-                      <SelectItem value="decoded">С телефоном</SelectItem>
+                      <SelectItem value="decoded">С телефоном ({decodedMembersCount})</SelectItem>
                       <SelectItem value="undecoded">Ожидают синхронизации</SelectItem>
-                      <SelectItem value="admins">Администраторы</SelectItem>
+                      <SelectItem value="online">В сети сейчас ({onlineMembersCount})</SelectItem>
+                      <SelectItem value="recent_24h">Активны за 24 часа</SelectItem>
+                      <SelectItem value="recent_7d">Активны за 7 дней</SelectItem>
+                      <SelectItem value="admins">Администраторы ({adminsCount})</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  {/* Сортировка */}
+                  <Select
+                    value={memberSort}
+                    onValueChange={(v) => setMemberSort(v as typeof memberSort)}
+                  >
+                    <SelectTrigger className="w-44 h-8 text-xs gap-1.5">
+                      <ArrowUpDownIcon className="size-3 text-muted-foreground" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="activity">По активности (онлайн)</SelectItem>
+                      <SelectItem value="phone">С номерами первыми</SelectItem>
+                      <SelectItem value="name">По имени (А–Я)</SelectItem>
+                      <SelectItem value="role">По роли (админы)</SelectItem>
+                      <SelectItem value="default">По порядку</SelectItem>
                     </SelectContent>
                   </Select>
 
@@ -1995,7 +2278,9 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                       Без дубликатов
                     </Label>
                   </div>
+                </div>
 
+                <div className="flex items-center gap-1.5">
                   <Button
                     variant="outline"
                     size="sm"
@@ -2192,24 +2477,62 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                       </Select>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs text-muted-foreground tabular-nums">
-                        стр. {membersCurrentPage} из {membersTotalPages}
-                      </span>
+                    <div className="flex items-center gap-1.5">
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 gap-1 text-xs"
+                        className="h-8 w-8 p-0 text-xs"
+                        onClick={() => setMembersPage(1)}
+                        disabled={membersCurrentPage <= 1}
+                        title="Первая страница"
+                      >
+                        «
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1 text-xs px-2.5"
                         onClick={() => setMembersPage(Math.max(1, membersCurrentPage - 1))}
                         disabled={membersCurrentPage <= 1}
                       >
                         <ChevronLeftIcon className="size-3.5" />
                         Назад
                       </Button>
+
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground px-1">
+                        <span>стр.</span>
+                        <Input
+                          type="number"
+                          min={1}
+                          max={membersTotalPages}
+                          value={jumpPageInput}
+                          onChange={(e) => setJumpPageInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const p = parseInt(jumpPageInput, 10)
+                              if (!isNaN(p)) {
+                                setMembersPage(Math.min(membersTotalPages, Math.max(1, p)))
+                              }
+                            }
+                          }}
+                          onBlur={() => {
+                            const p = parseInt(jumpPageInput, 10)
+                            if (!isNaN(p)) {
+                              setMembersPage(Math.min(membersTotalPages, Math.max(1, p)))
+                            } else {
+                              setJumpPageInput(String(membersCurrentPage))
+                            }
+                          }}
+                          className="h-8 w-14 text-center text-xs font-semibold tabular-nums px-1 bg-background"
+                          aria-label="Номер страницы"
+                        />
+                        <span>из {membersTotalPages}</span>
+                      </div>
+
                       <Button
                         variant="outline"
                         size="sm"
-                        className="h-8 gap-1 text-xs"
+                        className="h-8 gap-1 text-xs px-2.5"
                         onClick={() =>
                           setMembersPage(Math.min(membersTotalPages, membersCurrentPage + 1))
                         }
@@ -2217,6 +2540,16 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                       >
                         Вперёд
                         <ChevronRightIcon className="size-3.5" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-xs"
+                        onClick={() => setMembersPage(membersTotalPages)}
+                        disabled={membersCurrentPage >= membersTotalPages}
+                        title="Последняя страница"
+                      >
+                        »
                       </Button>
                     </div>
                   </div>
@@ -2471,196 +2804,6 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                   </Table>
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* ----------------- ВКЛАДКА 4: МОНИТОРИНГ СООБЩЕНИЙ ----------------- */}
-        <TabsContent value="monitor" className="space-y-4">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <RadioIcon className="size-5 text-indigo-600 dark:text-indigo-400" />
-                    <CardTitle className="text-base font-semibold">Мониторинг сообщений</CardTitle>
-                    {monitorStatus?.liveWatch ? (
-                      <Badge className="gap-1.5 bg-emerald-600 font-normal text-white hover:bg-emerald-600">
-                        <span className="inline-block size-2 animate-pulse rounded-full bg-white" />
-                        Обновление в реальном времени
-                      </Badge>
-                    ) : null}
-                    {monitorStatus?.isRunning ? (
-                      <Badge variant="outline" className="font-normal">Опрос активен</Badge>
-                    ) : (
-                      <Badge variant="secondary" className="font-normal">Опрос остановлен</Badge>
-                    )}
-                  </div>
-                  <CardDescription className="text-xs mt-0.5">
-                    Включайте нужные группы. Новые сообщения появляются автоматически, включая пропущенные во время перезапуска сервиса.
-                  </CardDescription>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <Button
-                    onClick={handleToggleMonitor}
-                    disabled={monitorToggling || monitorLoading}
-                    variant={monitorStatus?.isRunning ? "destructive" : "default"}
-                    className="gap-2 text-xs sm:text-sm"
-                  >
-                    {monitorToggling ? (
-                      <Loader2Icon className="size-4 animate-spin" />
-                    ) : monitorStatus?.isRunning ? (
-                      <SquareIcon className="size-4" />
-                    ) : (
-                      <PlayIcon className="size-4" />
-                    )}
-                    {monitorStatus?.isRunning ? "Остановить опрос" : "Запустить опрос"}
-                  </Button>
-
-                  <Button asChild variant="outline" size="sm" className="gap-1.5 text-xs h-9">
-                    <Link href="/dashboard/stream">
-                      <ExternalLinkIcon className="size-3.5" />
-                      <span>Открыть ленту</span>
-                    </Link>
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-lg border bg-card/60 p-3.5">
-                  <span className="text-xs font-medium text-muted-foreground block">Обработано сообщений</span>
-                  <p className="text-2xl font-bold font-mono tabular-nums mt-1">
-                    {monitorStatus?.processedMessagesCount ?? 0}
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">Получено автоматически</span>
-                </div>
-
-                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3.5">
-                  <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400 block">
-                    Номера из текста сообщений
-                  </span>
-                  <p className="text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 mt-1">
-                    {monitorStatus?.phonesFromTextCount ?? 0}
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">Определены автоматически</span>
-                </div>
-
-                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3.5">
-                  <span className="text-xs font-medium text-blue-700 dark:text-blue-400 block">
-                    Номера из профилей
-                  </span>
-                  <p className="text-2xl font-bold font-mono tabular-nums text-blue-600 dark:text-blue-400 mt-1">
-                    {monitorStatus?.phonesFromViberCount ?? 0}
-                  </p>
-                  <span className="text-[11px] text-muted-foreground">Получены автоматически</span>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <span className="text-xs font-medium">Группы</span>
-                <div className="max-h-56 overflow-y-auto rounded-lg border">
-                  {monitorGroupRows.length === 0 ? (
-                    groupsError ? (
-                      <p className="p-3 text-xs text-destructive">Инстанс недоступен: {groupsError}</p>
-                    ) : (
-                      <p className="p-3 text-xs text-muted-foreground">Нет доступных групп.</p>
-                    )
-                  ) : (
-                    <ul className="divide-y">
-                      {monitorGroupRows.map((row) => (
-                        <li key={row.conversationId} className="flex min-h-11 items-center gap-3 px-3 py-1">
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium">{row.name}</span>
-                            {row.missingOnDevice ? (
-                              <span className="block text-[11px] text-amber-600 dark:text-amber-400">
-                                {MONITOR_MISSING_ON_DEVICE_HINT}
-                              </span>
-                            ) : null}
-                          </span>
-                          {togglingMonitorGroupId === row.conversationId ? (
-                            <Loader2Icon className="size-4 shrink-0 animate-spin text-muted-foreground" />
-                          ) : null}
-                          <Switch
-                            checked={row.enabled}
-                            disabled={
-                              togglingMonitorGroupId === row.conversationId ||
-                              (row.missingOnDevice && !row.enabled)
-                            }
-                            onCheckedChange={(checked) =>
-                              void handleToggleMonitorGroup(row.conversationId, checked, row.groupKey)
-                            }
-                            aria-label={`${row.enabled ? "Выключить" : "Включить"} мониторинг ${row.name}`}
-                          />
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs font-medium">
-                  <span>Недавние сообщения</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-6 text-xs text-muted-foreground"
-                    onClick={() => void refreshMonitor()}
-                  >
-                    Обновить
-                  </Button>
-                </div>
-
-                {monitoredMessages.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-muted-foreground border rounded-lg">
-                    Пока нет сообщений. Включите группу, чтобы начать мониторинг.
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                    {monitoredMessages.slice(0, 8).map((msg) => (
-                      <div key={msg.id} className="rounded-lg border bg-card p-3 text-xs space-y-1.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-semibold text-foreground">
-                            {msg.conversationName || `Чат ${msg.conversationId}`}
-                          </span>
-                          <div className="flex items-center gap-2">
-                            {messageHasMedia(msg) ? (
-                              <Badge variant="outline" className="gap-1 text-[10px]">
-                                <ImageIcon className="size-3" />
-                                Фото
-                              </Badge>
-                            ) : null}
-                            {msg.attachedPhone ? (
-                              <Badge
-                                variant="outline"
-                                className={`font-mono text-[10px] ${
-                                  msg.phoneSource === "message_text"
-                                    ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 font-bold"
-                                    : "border-blue-500/40 text-blue-700 dark:text-blue-400 bg-blue-500/10"
-                                }`}
-                              >
-                                {msg.attachedPhone} ({msg.phoneSource === "message_text" ? "текст" : "профиль"})
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                                Без номера
-                              </Badge>
-                            )}
-                            <span className="text-[10px] text-muted-foreground tabular-nums">
-                              {new Date(msg.date).toLocaleTimeString("ru-RU")}
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-muted-foreground text-[11px] whitespace-pre-wrap line-clamp-2">
-                          {messagePreviewText(msg) || (messageHasMedia(msg) ? "Фото" : "—")}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
             </CardContent>
           </Card>
         </TabsContent>

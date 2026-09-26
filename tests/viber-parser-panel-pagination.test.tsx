@@ -130,6 +130,41 @@ describe("пагинация участников", () => {
 
     expect(screen.getByText("Показано 1–50 из 120")).toBeTruthy()
   })
+
+  it("кнопки « и » переходят на первую и последнюю страницу", async () => {
+    await mountPanel()
+
+    await click(screen.getByRole("button", { name: "»" }))
+    expect(screen.getByText("Показано 101–120 из 120")).toBeTruthy()
+
+    await click(screen.getByRole("button", { name: "«" }))
+    expect(screen.getByText("Показано 1–50 из 120")).toBeTruthy()
+  })
+
+  it("ввод номера страницы в поле переходит на указанную страницу", async () => {
+    await mountPanel()
+
+    const pageInput = screen.getByRole("spinbutton", { name: "Номер страницы" })
+    await reactAct(async () => {
+      fireEvent.change(pageInput, { target: { value: "3" } })
+      fireEvent.keyDown(pageInput, { key: "Enter" })
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(screen.getByText("Показано 101–120 из 120")).toBeTruthy()
+  })
+
+  it("поддерживает выбор малых размеров страницы (10, 15, 25)", async () => {
+    await mountPanel()
+
+    await pickPageSize("По 25")
+    expect(memberRows()).toHaveLength(25)
+    expect(screen.getByText("Показано 1–25 из 120")).toBeTruthy()
+
+    await pickPageSize("По 10")
+    expect(memberRows()).toHaveLength(10)
+    expect(screen.getByText("Показано 1–10 из 120")).toBeTruthy()
+  })
 })
 
 describe("ручное обновление участников", () => {

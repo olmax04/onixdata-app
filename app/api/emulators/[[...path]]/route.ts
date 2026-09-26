@@ -16,22 +16,37 @@ function parserOrigin() {
   return url.origin
 }
 
-async function getViberEngineStatus(origin: string) {
+interface ViberAccountDto {
+  phoneNumber?: string | null
+  displayName?: string | null
+  isAuthorized?: boolean
+}
+
+interface ViberEngineStatusResponse {
+  isRunning: boolean
+  pid: number | null
+  account?: ViberAccountDto | null
+}
+
+async function getViberEngineStatus(origin: string): Promise<ViberEngineStatusResponse> {
   try {
     const res = await fetch(`${origin}/api/viber/status`, {
       cache: "no-store",
       signal: AbortSignal.timeout(5000),
     })
     if (res.ok) {
-      return (await res.json()) as { isRunning: boolean; pid: number | null }
+      return (await res.json()) as ViberEngineStatusResponse
     }
   } catch {
     // ignore
   }
-  return { isRunning: false, pid: null }
+  return { isRunning: false, pid: null, account: null }
 }
 
-function buildDefaultInstance(viberRunning: boolean, host: string) {
+function buildDefaultInstance(viberStatus: ViberEngineStatusResponse, host: string) {
+  const account = viberStatus.account
+  const phone = account?.phoneNumber?.trim() || null
+
   return {
     id: "worker-1",
     name: "worker",
@@ -43,7 +58,7 @@ function buildDefaultInstance(viberRunning: boolean, host: string) {
     adbSerial: "emulator-5554",
     scrcpyUrl: null,
     bootCompleted: true,
-    viberRunning: viberRunning,
+    viberRunning: viberStatus.isRunning,
     adbOnline: true,
     setupStatus: {
       state: "ready" as const,
@@ -51,13 +66,15 @@ function buildDefaultInstance(viberRunning: boolean, host: string) {
       updatedAt: new Date().toISOString(),
       exitCode: 0,
     },
-    viberAccount: {
-      phoneNumber: "+380507805449",
-      displayName: "Viber Engine",
-      status: "authorized" as const,
-      authorizedAt: "2026-09-25T11:19:29.000Z",
-      source: "device" as const,
-    },
+    viberAccount: phone
+      ? {
+          phoneNumber: phone,
+          displayName: account?.displayName?.trim() || "Viber Engine",
+          status: account?.isAuthorized ? ("authorized" as const) : ("pending" as const),
+          authorizedAt: new Date().toISOString(),
+          source: "device" as const,
+        }
+      : null,
   }
 }
 
@@ -97,7 +114,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (pathParts.length === 0) {
     const viberStatus = await getViberEngineStatus(origin)
     return NextResponse.json({
-      emulators: [buildDefaultInstance(viberStatus.isRunning, host)],
+      emulators: [buildDefaultInstance(viberStatus, host)],
       kvmAvailable: true,
       vpsHost: host,
     })
@@ -106,15 +123,17 @@ export async function GET(request: NextRequest, context: RouteContext) {
   // Logs for the default instance
   if (subPath.includes("logs") || subPath.includes("log")) {
     const viberStatus = await getViberEngineStatus(origin)
+    const phone = viberStatus.account?.phoneNumber || "не привязан"
+    const displayName = viberStatus.account?.displayName ? ` (${viberStatus.account.displayName})` : ""
     return NextResponse.json({
-      logs: `[Viber Engine ${host}] Сервис подключен к бэкенду ${origin}\n[Viber Engine] Статус Viber: ${viberStatus.isRunning ? `запущен (PID: ${viberStatus.pid})` : "остановлен"}\n[Viber Engine] Серийный номер ADB: emulator-5554:5555\n[Viber Engine] Аккаунт Viber: +380507805449 (авторизован)\n[Viber Engine] Синхронизация с Supabase: активна (25 791 контактов)\n`,
+      logs: `[Viber Engine ${host}] Сервис подключен к бэкенду ${origin}\n[Viber Engine] Статус Viber: ${viberStatus.isRunning ? `запущен (PID: ${viberStatus.pid})` : "остановлен"}\n[Viber Engine] Серийный номер ADB: emulator-5554:5555\n[Viber Engine] Аккаунт Viber: ${phone}${displayName}\n[Viber Engine] Синхронизация с Supabase: активна (25 791 контактов)\n`,
     })
   }
 
   // Single instance detail
   if (pathParts[0] === "worker-1" || pathParts[0] === "worker") {
     const viberStatus = await getViberEngineStatus(origin)
-    return NextResponse.json(buildDefaultInstance(viberStatus.isRunning, host))
+    return NextResponse.json(buildDefaultInstance(viberStatus, host))
   }
 
   return NextResponse.json(

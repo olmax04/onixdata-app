@@ -104,6 +104,7 @@ export interface ViberGroup {
   /** Глобальный ключ группы Viber. У беседы без conversations.group_id его нет. */
   groupId: string | number | null
   name: string | null
+  groupName?: string | null
   conversationType: number
   memberCount: number
   messageCount?: number
@@ -114,6 +115,9 @@ export interface ViberGroup {
   hasStoredData?: boolean
   storedParticipantCount?: number
   storedPhoneCount?: number
+  dbParticipantCount?: number
+  emulatorParticipantCount?: number
+  lastSyncedAt?: string | null
 }
 
 export interface ViberGroupsResponse {
@@ -153,6 +157,7 @@ export interface ViberMember {
 export interface ViberMembersResponse {
   conversationId: number | string
   count: number
+  source?: "supabase" | "emulator"
   members: ViberMember[]
 }
 
@@ -396,9 +401,10 @@ export interface UsersSyncStatus {
 }
 
 export interface UsersSyncResult {
-  groupKey: string
-  conversationId: number
-  groupName: string
+  groupKey?: string
+  conversationId?: number
+  group?: string | null
+  groupName?: string
   usersUpserted: number
   usersInDatabase?: number | null
   syncedAt: string

@@ -269,20 +269,58 @@ export async function GET(request: NextRequest, context: RouteContext) {
         onDevice?: boolean
       }>
 
-      const groups = list.map((g) => ({
-        conversationId: g.id,
-        // Row id — это НЕ глобальный ключ группы: подстановка превращала бы
-        // беседу без conversations.group_id в несуществующий ключ, по которому
-        // мониторинг отвечает 404.
-        groupId: g.groupId ?? null,
-        name: g.name,
-        conversationType: g.type,
-        memberCount: g.participantCount,
-        messageCount: g.messageCount,
-        lastMessageDate: g.lastMessageDate,
-        unreadCount: g.unreadCount,
-        onDevice: g.onDevice,
-      }))
+      // Подтягиваем статус синхронизации с базой данных (Supabase)
+      const syncGroupMap = new Map<number | string, { participantCount: number; activeMembers?: number; lastSyncedAt?: string }>()
+      try {
+        const syncRes = await fetch(`${origin}/api/users/sync/status`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(10000),
+        })
+        if (syncRes && typeof syncRes.json === "function") {
+          const syncData = await syncRes.json().catch(() => null)
+          if (Array.isArray(syncData?.groups)) {
+            for (const sg of syncData.groups) {
+              if (sg.conversationId !== undefined && sg.conversationId !== null) {
+                syncGroupMap.set(Number(sg.conversationId), {
+                  participantCount: sg.participantCount ?? 0,
+                  activeMembers: sg.activeMembers,
+                  lastSyncedAt: sg.lastSyncedAt,
+                })
+              }
+              if (sg.groupKey) {
+                syncGroupMap.set(String(sg.groupKey), {
+                  participantCount: sg.participantCount ?? 0,
+                  activeMembers: sg.activeMembers,
+                  lastSyncedAt: sg.lastSyncedAt,
+                })
+              }
+            }
+          }
+        }
+      } catch {
+        // Игнорируем: если Supabase недоступен, отдаем данные эмулятора
+      }
+
+      const groups = list.map((g) => {
+        const syncInfo = syncGroupMap.get(g.id) ?? (g.groupId ? syncGroupMap.get(String(g.groupId)) : undefined)
+        const dbCount = syncInfo?.participantCount ?? 0
+        return {
+          conversationId: g.id,
+          groupId: g.groupId ?? null,
+          name: g.name,
+          conversationType: g.type,
+          memberCount: g.participantCount,
+          emulatorParticipantCount: g.participantCount,
+          dbParticipantCount: dbCount,
+          storedParticipantCount: dbCount,
+          hasStoredData: dbCount > 0,
+          messageCount: g.messageCount,
+          lastMessageDate: g.lastMessageDate,
+          lastSyncedAt: syncInfo?.lastSyncedAt ?? null,
+          unreadCount: g.unreadCount,
+          onDevice: g.onDevice,
+        }
+      })
 
       return NextResponse.json({
         count: groups.length,
@@ -297,17 +335,42 @@ export async function GET(request: NextRequest, context: RouteContext) {
       (pathParts[2] === "members" || pathParts[2] === "participants")
     ) {
       const groupTargetId = pathParts[1]
+      const requestedSource = request.nextUrl.searchParams.get("source") || "supabase"
       const deviceId = request.nextUrl.searchParams.get("deviceId")
-      const participantsUrl = new URL(`${origin}/api/groups/${encodeURIComponent(groupTargetId)}/participants`)
-      if (deviceId) {
-        participantsUrl.searchParams.set("deviceId", deviceId)
-      }
-      forwardRefresh(request, participantsUrl)
 
-      const res = await fetch(participantsUrl.toString(), {
+      const targetUrl = requestedSource === "emulator"
+        ? new URL(`${origin}/api/groups/${encodeURIComponent(groupTargetId)}/participants`)
+        : new URL(`${origin}/api/users/group/${encodeURIComponent(groupTargetId)}`)
+
+      if (deviceId && requestedSource === "emulator") {
+        targetUrl.searchParams.set("deviceId", deviceId)
+      }
+      forwardRefresh(request, targetUrl)
+
+      let res = await fetch(targetUrl.toString(), {
         cache: "no-store",
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       })
+
+      let actualSource = requestedSource
+      // Если при запросе к Supabase произошла ошибка, пробуем эмулятор как запасной вариант
+      if (!res.ok && requestedSource === "supabase") {
+        const fallbackUrl = new URL(`${origin}/api/groups/${encodeURIComponent(groupTargetId)}/participants`)
+        if (deviceId) fallbackUrl.searchParams.set("deviceId", deviceId)
+        forwardRefresh(request, fallbackUrl)
+        try {
+          const fallbackRes = await fetch(fallbackUrl.toString(), {
+            cache: "no-store",
+            signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+          })
+          if (fallbackRes.ok) {
+            res = fallbackRes
+            actualSource = "emulator"
+          }
+        } catch {
+          // ignore fallback error
+        }
+      }
 
       if (!res.ok) {
         return jsonError(`Failed to fetch group members for ID ${groupTargetId}`, res.status)
@@ -355,6 +418,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       return NextResponse.json({
         conversationId,
         count: members.length,
+        source: actualSource,
         members,
       })
     }

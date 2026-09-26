@@ -196,6 +196,26 @@ describe("GET /api/viber/groups/:id/members", () => {
     await GET(req("groups/42/members?refresh=1"), ctx("groups/42/members"))
     expect(String(fetchMock.mock.calls[0][0])).toContain("refresh=1")
   })
+
+  it("по умолчанию обращается к Supabase (/api/users/group/:id)", async () => {
+    fetchMock.mockResolvedValue(participantsResponse())
+
+    const res = await GET(req("groups/42/members"), ctx("groups/42/members"))
+    const body = await res.json()
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/users/group/42")
+    expect(body.source).toBe("supabase")
+  })
+
+  it("при source=emulator запрашивает эмулятор (/api/groups/:id/participants)", async () => {
+    fetchMock.mockResolvedValue(participantsResponse())
+
+    const res = await GET(req("groups/42/members?source=emulator"), ctx("groups/42/members"))
+    const body = await res.json()
+
+    expect(String(fetchMock.mock.calls[0][0])).toContain("/api/groups/42/participants")
+    expect(body.source).toBe("emulator")
+  })
 })
 
 describe("GET /api/viber/groups", () => {
