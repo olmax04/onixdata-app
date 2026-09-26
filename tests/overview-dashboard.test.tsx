@@ -247,6 +247,78 @@ describe("OverviewDashboard component", () => {
       )
     })
   })
+
+  it("renders live Supabase sync counts and groups when database/stats is empty", async () => {
+    global.fetch = vi.fn((url: RequestInfo | URL) => {
+      const urlStr = url.toString()
+
+      if (urlStr.includes("database/stats")) {
+        return Promise.resolve(
+          jsonResponse({ conversationsCount: 0, participantsCount: 0, undecodedParticipantsCount: 0, messagesCount: 0 })
+        )
+      }
+
+      if (urlStr.includes("/api/viber/groups")) {
+        return Promise.resolve(jsonResponse({ count: 0, groups: [] }))
+      }
+
+      if (urlStr.includes("users/sync/status")) {
+        return Promise.resolve(
+          jsonResponse({
+            usersTotal: 25791,
+            groupsTotal: 3,
+            membersTotal: 25937,
+            groups: [
+              {
+                groupKey: "5200687265612094219",
+                conversationId: 4,
+                name: "Автобусные рейсы по Украине и миру",
+                participantCount: 22323,
+                activeMembers: 22323,
+                inactiveMembers: 0,
+              },
+            ],
+          })
+        )
+      }
+
+      if (urlStr.includes("users?limit=6")) {
+        return Promise.resolve(
+          jsonResponse({
+            total: 25791,
+            items: [
+              {
+                id: 824,
+                phone: "+380507805449",
+                name: "Nico",
+                is_online: true,
+              },
+            ],
+          })
+        )
+      }
+
+      if (urlStr.includes("tasks")) return Promise.resolve(jsonResponse([]))
+      if (urlStr.includes("messages/monitored")) return Promise.resolve(jsonResponse([]))
+      if (urlStr.includes("messages/monitor/status")) return Promise.resolve(jsonResponse({ isRunning: false }))
+
+      return Promise.resolve(jsonResponse({}))
+    }) as any
+
+    render(<OverviewDashboard />)
+
+    await waitFor(() => {
+      // 25 791 participants from Supabase (appears in badge and KPI card)
+      expect(screen.getAllByText(/25[\s\u00a0,]791/).length).toBeGreaterThan(0)
+      // 3 groups
+      expect(screen.getByText("3")).toBeDefined()
+      // Real group name from Supabase
+      expect(screen.getByText("Автобусные рейсы по Украине и миру")).toBeDefined()
+      // Recent contact from Supabase
+      expect(screen.getByText("Nico")).toBeDefined()
+      expect(screen.getByText("+380507805449")).toBeDefined()
+    })
+  })
 })
 
 function deferred<T>() {

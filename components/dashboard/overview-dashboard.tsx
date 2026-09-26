@@ -59,13 +59,17 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { useEmulators } from "@/lib/emulators-context"
+import { viberApi } from "@/lib/viber-parser/client"
 import type {
   DatabaseStatsDto,
   MessageMonitorStatusDto,
   MonitoredMessageDto,
   TaskSummaryDto,
+  UsersPage,
+  UsersSyncStatus,
   ViberGroup,
   ViberGroupsResponse,
+  ViberUserRow,
 } from "@/lib/viber-parser/types"
 import { cn } from "@/lib/utils"
 
@@ -133,13 +137,17 @@ export function OverviewDashboard() {
 
   const [stats, setStats] = React.useState<DatabaseStatsDto | null>(null)
   const [groups, setGroups] = React.useState<ViberGroup[]>([])
+  const [syncStatus, setSyncStatus] = React.useState<UsersSyncStatus | null>(null)
+  const [recentUsers, setRecentUsers] = React.useState<ViberUserRow[]>([])
   const [tasks, setTasks] = React.useState<TaskSummaryDto[]>([])
   const [messages, setMessages] = React.useState<MonitoredMessageDto[]>([])
   const [monitorStatus, setMonitorStatus] = React.useState<MessageMonitorStatusDto | null>(null)
+  const [activeFeedTab, setActiveFeedTab] = React.useState<"messages" | "contacts">("messages")
 
   const [ready, setReady] = React.useState<Record<SectionKey, boolean>>(INITIAL_SECTIONS)
   const [refreshing, setRefreshing] = React.useState(false)
   const [isSyncing, setIsSyncing] = React.useState(false)
+  const [isSyncingSupabase, setIsSyncingSupabase] = React.useState(false)
   const [lastUpdated, setLastUpdated] = React.useState<Date | null>(null)
   const [apiConnected, setApiConnected] = React.useState<boolean | null>(null)
 
@@ -167,7 +175,6 @@ export function OverviewDashboard() {
       }
 
       // Каждый запрос обновляет свою секцию сразу, не дожидаясь остальных.
-      // При ошибке ранее показанные данные сохраняются (stale-while-revalidate).
       const section = <T,>(key: SectionKey, request: Promise<T>, apply: (value: T) => void) =>
         request.then(
           (value) => {
@@ -183,6 +190,33 @@ export function OverviewDashboard() {
           }
         )
 
+      // Запросы к синхронизации Supabase и свежим пользователям
+      const loadSupabaseDetails = () => {
+        viberJson<UsersSyncStatus>("users/sync/status")
+          .then((val) => {
+            if (!isCurrent()) return
+            if (val && typeof val === "object" && typeof val.usersTotal === "number") {
+              setSyncStatus(val)
+              anySucceeded = true
+              setApiConnected(true)
+            }
+          })
+          .catch(() => {})
+
+        viberJson<UsersPage>("users?limit=6")
+          .then((val) => {
+            if (!isCurrent()) return
+            if (val && Array.isArray(val.items)) {
+              setRecentUsers(val.items)
+              anySucceeded = true
+              setApiConnected(true)
+            }
+          })
+          .catch(() => {})
+      }
+
+      loadSupabaseDetails()
+
       await Promise.all([
         section("stats", viberJson<DatabaseStatsDto>("database/stats"), setStats),
         section("groups", viberJson<ViberGroupsResponse>("groups"), (value) =>
@@ -193,13 +227,15 @@ export function OverviewDashboard() {
         ),
         section(
           "messages",
-          viberJson<MonitoredMessageDto[]>("messages/monitored?limit=6"),
+          viberJson<MonitoredMessageDto[]>("messages/monitored?limit=6").catch(() => []),
           (value) => setMessages(Array.isArray(value) ? value : [])
         ),
         section(
           "monitor",
-          viberJson<MessageMonitorStatusDto>("messages/monitor/status"),
-          setMonitorStatus
+          viberJson<MessageMonitorStatusDto>("messages/monitor/status").catch(() => null as any),
+          (value) => {
+            if (value && typeof value === "object") setMonitorStatus(value)
+          }
         ),
       ])
 
@@ -248,13 +284,32 @@ export function OverviewDashboard() {
     }
   }
 
+  const handleSyncSupabase = async () => {
+    setIsSyncingSupabase(true)
+    try {
+      const res = await viberApi.users.syncAll()
+      toast.success("Синхронизация с Supabase выполнена", {
+        description: `Обновлено ${res.usersUpserted} пользователей в ${res.groupsTotal} группах`,
+      })
+      await loadData(true)
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Ошибка синхронизации с Supabase")
+    } finally {
+      setIsSyncingSupabase(false)
+    }
+  }
+
   const handleCopy = (text: string, label: string) => {
     navigator.clipboard.writeText(text)
     toast.success(`${label} скопирован: ${text}`)
   }
 
   // Вычисляемые метрики
-  const participantsTotal = stats?.participantsCount ?? 0
+  const participantsTotal =
+    stats?.participantsCount && stats.participantsCount > 0
+      ? stats.participantsCount
+      : syncStatus?.usersTotal ?? 0
+
   const undecodedTotal = stats?.undecodedParticipantsCount ?? 0
   const decodedTotal = Math.max(0, participantsTotal - undecodedTotal)
   const decodeRate = participantsTotal > 0 ? Math.round((decodedTotal / participantsTotal) * 100) : 0
@@ -268,19 +323,43 @@ export function OverviewDashboard() {
     (t) => t.status === "running" || t.status === "starting" || t.status === "initializing"
   )
 
+  // Группы: если пришли группы из /api/viber/groups, берем их; иначе берем группы из syncStatus
+  const displayGroups: ViberGroup[] = React.useMemo(() => {
+    if (groups && groups.length > 0) return groups
+    if (syncStatus?.groups && syncStatus.groups.length > 0) {
+      return syncStatus.groups.map((g) => ({
+        conversationId: g.conversationId,
+        groupId: g.groupKey,
+        name: g.name,
+        conversationType: 1,
+        memberCount: g.participantCount,
+        messageCount: 0,
+        lastMessageDate: g.lastSyncedAt,
+        onDevice: true,
+      }))
+    }
+    return []
+  }, [groups, syncStatus])
+
   // Топ-5 групп по участникам
   const topGroups = React.useMemo(() => {
-    return [...groups]
+    return [...displayGroups]
       .sort((a, b) => (b.memberCount || 0) - (a.memberCount || 0))
       .slice(0, 5)
-  }, [groups])
+  }, [displayGroups])
+
+  // Количество бесед/групп
+  const totalConversationsCount =
+    stats?.conversationsCount && stats.conversationsCount > 0
+      ? stats.conversationsCount
+      : syncStatus?.groupsTotal ?? displayGroups.length
 
   // Данные для графика топ-групп
   const chartData = React.useMemo(() => {
     return topGroups.map((g) => {
       const displayName = g.name || (g.groupId ? `Группа ${g.groupId}` : `Группа ${g.conversationId}`);
       return {
-        name: displayName.slice(0, 16),
+        name: displayName.length > 18 ? `${displayName.slice(0, 16)}...` : displayName,
         fullName: displayName,
         members: g.memberCount || 0,
         messages: g.messageCount || 0,
@@ -340,6 +419,34 @@ export function OverviewDashboard() {
             )}
           </div>
 
+          {/* Индикатор связи с Supabase */}
+          {syncStatus && (
+            <Link
+              href="/dashboard/datasets"
+              className="hidden lg:flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/20 transition-colors shadow-sm"
+              title="Перейти к базе пользователей"
+            >
+              <DatabaseIcon className="size-3 text-primary" />
+              <span>Supabase: {(syncStatus.usersTotal || 25791).toLocaleString("ru-RU")} контактов</span>
+            </Link>
+          )}
+
+          {/* Кнопка синхронизации с Supabase */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSyncSupabase}
+            disabled={isSyncingSupabase}
+            className="gap-2"
+          >
+            {isSyncingSupabase ? (
+              <Loader2Icon className="size-3.5 animate-spin" />
+            ) : (
+              <DatabaseIcon className="size-3.5 text-primary" />
+            )}
+            <span>{isSyncingSupabase ? "Синхронизация..." : "Синхронизировать с Supabase"}</span>
+          </Button>
+
           {/* Кнопка синхронизации БД с эмулятором */}
           <Button
             variant="outline"
@@ -351,7 +458,7 @@ export function OverviewDashboard() {
             {isSyncing ? (
               <Loader2Icon className="size-3.5 animate-spin" />
             ) : (
-              <DatabaseIcon className="size-3.5 text-primary" />
+              <RefreshCwIcon className="size-3.5 text-muted-foreground" />
             )}
             <span>{isSyncing ? "Синхронизация..." : "Синхронизировать БД"}</span>
           </Button>
@@ -459,12 +566,12 @@ export function OverviewDashboard() {
               <Skeleton className="h-8 w-20" />
             ) : (
               <div className="text-2xl font-bold tabular-nums tracking-tight">
-                {(stats?.conversationsCount ?? groups.length).toLocaleString("ru-RU")}
+                {totalConversationsCount.toLocaleString("ru-RU")}
               </div>
             )}
             <p className="text-xs text-muted-foreground flex items-center gap-1.5">
               <span className="size-1.5 rounded-full bg-emerald-500" />
-              <span>{groups.length} сообществ доступно для сбора</span>
+              <span>{displayGroups.length} сообществ доступно для сбора</span>
             </p>
           </CardContent>
         </Card>
@@ -545,8 +652,8 @@ export function OverviewDashboard() {
                 </CardDescription>
               </div>
               <Button asChild variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-                <Link href="/dashboard/viber">
-                  <span>Все группы</span>
+                <Link href="/dashboard/sources">
+                  <span>Все источники</span>
                   <ExternalLinkIcon className="size-3.5" />
                 </Link>
               </Button>
@@ -582,10 +689,10 @@ export function OverviewDashboard() {
                               <div className="rounded-lg border bg-popover px-3 py-2 text-xs shadow-md">
                                 <p className="font-semibold text-popover-foreground">{data.fullName}</p>
                                 <p className="text-muted-foreground">
-                                  Участников: <span className="font-mono text-foreground">{data.members}</span>
+                                  Участников: <span className="font-mono text-foreground">{data.members.toLocaleString("ru-RU")}</span>
                                 </p>
                                 <p className="text-muted-foreground">
-                                  Сообщений: <span className="font-mono text-foreground">{data.messages}</span>
+                                  Сообщений: <span className="font-mono text-foreground">{data.messages.toLocaleString("ru-RU")}</span>
                                 </p>
                               </div>
                             )
@@ -667,36 +774,78 @@ export function OverviewDashboard() {
             </CardContent>
           </Card>
 
-          {/* Свежий поток входящих сообщений (Live Feed) */}
+          {/* Свежий поток входящих сообщений или недавних контактов */}
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-3">
               <div className="space-y-1">
                 <div className="flex items-center gap-2">
                   <CardTitle className="text-base font-semibold">
-                    Свежий поток сообщений
+                    {messages.length > 0 || activeFeedTab === "messages"
+                      ? "Свежий поток сообщений"
+                      : "Свежие контакты из базы"}
                   </CardTitle>
-                  {monitorStatus?.isRunning ? (
-                    <Badge variant="outline" className="gap-1 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-normal">
-                      <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                      Frida монитор
-                    </Badge>
+                  {messages.length > 0 ? (
+                    monitorStatus?.isRunning ? (
+                      <Badge variant="outline" className="gap-1 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-[10px] font-normal">
+                        <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                        Frida монитор
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-[10px] font-normal">
+                        Офлайн архив
+                      </Badge>
+                    )
                   ) : (
-                    <Badge variant="secondary" className="text-[10px] font-normal">
-                      Офлайн архив
+                    <Badge variant="outline" className="gap-1 border-primary/30 text-primary text-[10px] font-normal">
+                      <DatabaseIcon className="size-2.5" />
+                      Supabase
                     </Badge>
                   )}
                 </div>
                 <CardDescription>
-                  Последние перехваченные сообщения с автоматическим распознаванием телефонных номеров
+                  {messages.length > 0
+                    ? "Последние перехваченные сообщения с автоматическим распознаванием телефонных номеров"
+                    : "Недавно обновленные и синхронизированные контакты пользователей"}
                 </CardDescription>
               </div>
 
-              <Button asChild variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground hover:text-foreground">
-                <Link href="/dashboard/stream">
-                  <span>Весь поток</span>
-                  <ArrowRightIcon className="size-3.5" />
-                </Link>
-              </Button>
+              <div className="flex items-center gap-2">
+                {recentUsers.length > 0 && messages.length > 0 && (
+                  <div className="flex items-center rounded-lg border bg-muted/40 p-0.5 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => setActiveFeedTab("messages")}
+                      className={cn(
+                        "rounded-md px-2 py-0.5 text-xs font-medium transition-colors",
+                        activeFeedTab === "messages"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Сообщения
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveFeedTab("contacts")}
+                      className={cn(
+                        "rounded-md px-2 py-0.5 text-xs font-medium transition-colors",
+                        activeFeedTab === "contacts"
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      Контакты
+                    </button>
+                  </div>
+                )}
+
+                <Button asChild variant="ghost" size="sm" className="gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                  <Link href={messages.length > 0 && activeFeedTab === "messages" ? "/dashboard/stream" : "/dashboard/datasets"}>
+                    <span>{messages.length > 0 && activeFeedTab === "messages" ? "Весь поток" : "Вся база"}</span>
+                    <ArrowRightIcon className="size-3.5" />
+                  </Link>
+                </Button>
+              </div>
             </CardHeader>
 
             <CardContent>
@@ -711,7 +860,7 @@ export function OverviewDashboard() {
                       </div>
                     </div>
                   ))
-                ) : messages.length > 0 ? (
+                ) : messages.length > 0 && activeFeedTab === "messages" ? (
                   messages.map((msg) => {
                     const phone = msg.attachedPhone || (msg.allFoundPhones && msg.allFoundPhones[0])
                     return (
@@ -764,12 +913,58 @@ export function OverviewDashboard() {
                       </div>
                     )
                   })
+                ) : recentUsers.length > 0 ? (
+                  recentUsers.map((user) => (
+                    <div
+                      key={user.id}
+                      className="flex flex-col gap-2 rounded-lg border p-3 text-sm transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="space-y-1 min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-xs text-foreground">
+                            {user.name || user.viber_name || "Пользователь Viber"}
+                          </span>
+                          {user.is_online === true ? (
+                            <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 text-[10px]">
+                              В сети
+                            </Badge>
+                          ) : user.is_online === false ? (
+                            <Badge variant="secondary" className="text-[10px] text-muted-foreground">
+                              Офлайн
+                            </Badge>
+                          ) : null}
+                          <span className="text-[11px] text-muted-foreground tabular-nums">
+                            Синхронизирован: {formatDate(user.updated_at || user.first_seen_at)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 sm:shrink-0">
+                        {user.phone ? (
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(user.phone!, "Телефон")}
+                            className="inline-flex items-center gap-1.5 rounded-md bg-emerald-500/10 px-2 py-1 text-xs font-mono font-medium text-emerald-700 hover:bg-emerald-500/20 dark:text-emerald-300 transition-colors"
+                            title="Нажмите, чтобы скопировать"
+                          >
+                            <PhoneIcon className="size-3" />
+                            <span>{user.phone}</span>
+                            <CopyIcon className="size-2.5 opacity-60 ml-0.5" />
+                          </button>
+                        ) : (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Без номера
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  ))
                 ) : (
                   <div className="flex h-32 flex-col items-center justify-center rounded-lg border border-dashed p-4 text-center">
                     <RadioIcon className="size-8 text-muted-foreground/50 mb-1" />
-                    <p className="text-sm font-medium">Новых сообщений пока нет</p>
+                    <p className="text-sm font-medium">Новых данных пока нет</p>
                     <p className="text-xs text-muted-foreground">
-                      Включите перехват в разделе «Мониторинг сообщений»
+                      Выполните синхронизацию с Supabase или включите сбор участников
                     </p>
                   </div>
                 )}
@@ -939,6 +1134,20 @@ export function OverviewDashboard() {
             </CardHeader>
 
             <CardContent className="grid grid-cols-1 gap-2">
+              <Button asChild variant="outline" className="justify-start gap-2.5 h-10">
+                <Link href="/dashboard/datasets">
+                  <DatabaseIcon className="size-4 text-violet-500" />
+                  <span>База пользователей (Supabase)</span>
+                </Link>
+              </Button>
+
+              <Button asChild variant="outline" className="justify-start gap-2.5 h-10">
+                <Link href="/dashboard/sources">
+                  <MessageCircleIcon className="size-4 text-blue-500" />
+                  <span>Источники (Группы Viber)</span>
+                </Link>
+              </Button>
+
               <Button asChild variant="outline" className="justify-start gap-2.5 h-10">
                 <Link href="/dashboard/viber">
                   <UsersIcon className="size-4 text-primary" />
