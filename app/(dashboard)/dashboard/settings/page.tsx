@@ -14,9 +14,9 @@ export default function SettingsPage() {
 
       <main className="flex-1 space-y-6 p-4 sm:p-6">
         <div>
-          <h2 className="text-lg font-semibold">Настройки рабочей области</h2>
+          <h2 className="text-lg font-semibold">Настройки профиля</h2>
           <p className="text-sm text-muted-foreground">
-            Профиль и пароль, доступ к API и уведомления.
+            Управление данными профиля и безопасность учетной записи.
           </p>
         </div>
 
