@@ -73,11 +73,14 @@ function LoginForm() {
       })
 
       if (error) {
+        let msg = error.message
+        if (error.message === "Invalid login credentials") {
+          msg = "Неверный email или пароль. Если аккаунт ещё не создан, перейдите в «Регистрация»."
+        } else if (error.message.toLowerCase().includes("email not confirmed")) {
+          msg = "Email ещё не подтверждён. Проверьте почту или отключите «Confirm email» в настройках Supabase."
+        }
         toast.error("Ошибка входа", {
-          description:
-            error.message === "Invalid login credentials"
-              ? "Неверный email или пароль. Если аккаунт ещё не создан, перейдите в «Регистрация»."
-              : error.message,
+          description: msg,
         })
         return
       }

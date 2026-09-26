@@ -88,8 +88,17 @@ export default function RegisterPage() {
       })
 
       if (error) {
+        let msg = error.message
+        const lower = error.message.toLowerCase()
+        if (lower.includes("rate limit") || lower.includes("over_email_send_rate_limit")) {
+          msg = "Превышен лимит отправки писем Supabase (по умолчанию 3-4 письма в час). Отключите подтверждение email в панели Supabase (Confirm email -> OFF) или подождите."
+        } else if (lower.includes("user already registered")) {
+          msg = "Пользователь с таким email уже зарегистрирован. Перейдите на страницу входа."
+        } else if (lower.includes("email_address_invalid")) {
+          msg = "Некорректный почтовый домен или email адрес."
+        }
         toast.error("Ошибка регистрации", {
-          description: error.message,
+          description: msg,
         })
         return
       }
