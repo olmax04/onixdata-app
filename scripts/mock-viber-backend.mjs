@@ -12,6 +12,8 @@
  * Запуск:  PORT=3001 node scripts/mock-viber-backend.mjs
  * Хаос:    PORT=3001 MOCK_CHAOS=1 node scripts/mock-viber-backend.mjs
  *          (~25 % запросов к /api/tasks подвисают на 8 с или отвечают 500)
+ * Токен:   PORT=3001 MOCK_TOKEN=secret node scripts/mock-viber-backend.mjs
+ *          (без заголовка Authorization: Bearer secret — 401, как reverse proxy на VM)
  */
 
 import { createServer } from "node:http"
@@ -20,6 +22,8 @@ const PORT = Number.parseInt(process.env.PORT ?? "3001", 10)
 const CHAOS = process.env.MOCK_CHAOS === "1"
 /** MOCK_NO_BROADCAST=1 повторяет старую сборку бэкенда без модуля рассылки (404 на /api/broadcast/*). */
 const NO_BROADCAST = process.env.MOCK_NO_BROADCAST === "1"
+/** MOCK_TOKEN=… требует Authorization: Bearer … — так проверяется VIBER_PARSER_TOKEN. */
+const TOKEN = process.env.MOCK_TOKEN ?? ""
 const CHAOS_RATE = 0.25
 const CHAOS_HANG_MS = 8000
 
@@ -989,6 +993,11 @@ const server = createServer((req, res) => {
       "Access-Control-Allow-Headers": "*",
     })
     res.end()
+    return
+  }
+
+  if (TOKEN && req.headers.authorization !== `Bearer ${TOKEN}`) {
+    sendJson(res, 401, { message: "Unauthorized", statusCode: 401 })
     return
   }
 

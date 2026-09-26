@@ -143,6 +143,48 @@ export function buildStatusPayload(input: {
   }
 }
 
+export const DEFAULT_PARSER_URL = "http://127.0.0.1:3001"
+
+export interface UpstreamConfig {
+  /** Адрес бэкенда без завершающего «/»: origin плюс необязательный префикс пути. */
+  baseUrl: string
+  /** Заголовки, которые уходят с каждым запросом к бэкенду (авторизация). */
+  headers: Record<string, string>
+}
+
+/**
+ * Читает VIBER_PARSER_URL и VIBER_PARSER_TOKEN. Бэкенд может стоять на удалённой
+ * машине (VM в GCP) за reverse proxy, поэтому сохраняем префикс пути
+ * (`https://api.example.com/viber` → `/viber/api/...`) и поддерживаем авторизацию:
+ * логин и пароль из URL уходят как Basic, токен — как Bearer.
+ */
+export function resolveUpstreamConfig(env: {
+  VIBER_PARSER_URL?: string
+  VIBER_PARSER_TOKEN?: string
+}): UpstreamConfig {
+  const url = new URL(env.VIBER_PARSER_URL?.trim() || DEFAULT_PARSER_URL)
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("VIBER_PARSER_URL must use http or https")
+  }
+
+  const token = env.VIBER_PARSER_TOKEN?.trim()
+  const hasCredentials = url.username !== "" || url.password !== ""
+  if (token && hasCredentials) {
+    throw new Error("Use either credentials in VIBER_PARSER_URL or VIBER_PARSER_TOKEN, not both")
+  }
+
+  const headers: Record<string, string> = {}
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  } else if (hasCredentials) {
+    const credentials = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`
+    headers.Authorization = `Basic ${Buffer.from(credentials, "utf8").toString("base64")}`
+  }
+
+  const prefix = url.pathname.replace(/\/+$/, "")
+  return { baseUrl: `${url.origin}${prefix}`, headers }
+}
+
 export type ProxyMethod = "GET" | "POST" | "PATCH" | "DELETE"
 
 export type ProxyRouteKind =

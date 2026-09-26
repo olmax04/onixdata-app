@@ -52,6 +52,73 @@ VIBER_PARSER_URL=http://127.0.0.1:3001
 Запустите `viber-bot` согласно его README, затем откройте раздел
 **Группы Viber** в навигации OnixData.
 
+### Бэкенд на VM в GCP (Compute Engine)
+
+Браузер в VM не ходит: запросы отправляет сервер Next.js, поэтому бэкенд
+должен быть доступен **с машины, где запущен OnixData**, а не из браузера.
+
+| Переменная | Пример | Что делает |
+| --- | --- | --- |
+| `VIBER_PARSER_URL` | `http://34.118.10.20:3001` | внешний IP VM и порт viber-bot |
+| | `https://api.example.com/viber-bot` | бэкенд за nginx; префикс пути сохраняется |
+| | `https://user:pass@api.example.com` | basic auth: логин и пароль уходят заголовком `Authorization: Basic` |
+| `VIBER_PARSER_TOKEN` | `длинная-случайная-строка` | уходит с каждым запросом как `Authorization: Bearer …` |
+
+Логин в URL и `VIBER_PARSER_TOKEN` одновременно указать нельзя. После
+изменения `.env.local` перезапустите `npm run dev` / `npm run start`.
+
+Порядок настройки:
+
+1. **Статический внешний IP.** Эфемерный IP меняется после остановки VM.
+   Закрепите его: VPC network → IP addresses → Reserve (или
+   `gcloud compute addresses create …`).
+2. **viber-bot слушает `0.0.0.0`**, а не `127.0.0.1`, иначе снаружи порт
+   закрыт даже при открытом firewall. Проверка на VM:
+   `ss -ltnp | grep 3001`.
+3. **Правило firewall.** Откройте порт только для IP сервера OnixData, не
+   для `0.0.0.0/0`: бэкенд отдаёт номера телефонов и сам запросы не
+   авторизует.
+
+   ```bash
+   gcloud compute firewall-rules create allow-viber-bot \
+     --network=default --direction=INGRESS --action=ALLOW \
+     --rules=tcp:3001 --source-ranges=<IP_СЕРВЕРА_ONIXDATA>/32 \
+     --target-tags=viber-bot
+   gcloud compute instances add-tags <VM_NAME> --zone=<ZONE> --tags=viber-bot
+   ```
+
+4. **Проверка** с машины OnixData: `curl http://<EXTERNAL_IP>:3001/api/tasks`
+   должен вернуть JSON-массив. Затем `curl http://localhost:3000/api/viber/status`.
+
+Если IP сервера OnixData заранее неизвестен (Vercel, домашний интернет),
+поставьте перед viber-bot nginx с HTTPS и проверкой токена, а порт 3001
+оставьте закрытым снаружи. Буферизацию нужно отключить, а таймауты поднять:
+иначе рвутся SSE и долгие операции (дешифровка идёт до 6 минут).
+
+```nginx
+location /viber-bot/ {
+    if ($http_authorization != "Bearer <VIBER_PARSER_TOKEN>") { return 401; }
+    proxy_pass http://127.0.0.1:3001/;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+}
+```
+
+```dotenv
+VIBER_PARSER_URL=https://api.example.com/viber-bot
+VIBER_PARSER_TOKEN=<тот же токен>
+```
+
+Если вместо nginx используется HTTP(S) Load Balancer GCP, поднимите таймаут
+backend service (по умолчанию 30 с) минимум до 600 с по той же причине.
+
+Токен и basic auth по голому `http://` передаются открытым текстом, поэтому
+вместе с ними используйте HTTPS. Локально авторизацию проверяет
+`MOCK_TOKEN=secret npm run mock:viber` вместе с `VIBER_PARSER_TOKEN=secret`.
+
 ### Что делает прокси
 
 **Консолидированный статус.** `GET /api/viber/status` — единственный запрос,

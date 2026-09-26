@@ -5,14 +5,13 @@ import {
   composeAbortSignals,
   createSseHeartbeatStream,
   matchProxyRoute,
+  resolveUpstreamConfig,
   sanitizeCollectBody,
   sanitizeDecodeBody,
   type ProxyMatch,
   type ProxyMethod,
 } from "@/lib/viber-parser/proxy"
 import type { TaskDetailDto, TaskSummaryDto } from "@/lib/viber-parser/types"
-
-const DEFAULT_PARSER_URL = "http://127.0.0.1:3001"
 
 /** Опрос статуса и деталей задачи: короткий бюджет, чтобы поллинг не залипал. */
 const STATUS_TIMEOUT_MS = 15_000
@@ -38,13 +37,20 @@ function jsonError(error: string, status: number) {
   return NextResponse.json({ error }, { status })
 }
 
-function parserOrigin() {
-  const configured = process.env.VIBER_PARSER_URL?.trim() || DEFAULT_PARSER_URL
-  const url = new URL(configured)
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("VIBER_PARSER_URL must use http or https")
-  }
-  return url.origin
+/** Все запросы к бэкенду идут через эту функцию: базовый адрес, авторизация, no-store. */
+function upstreamFetch(
+  path: string,
+  init: Omit<RequestInit, "headers"> & { headers?: Record<string, string> } = {}
+): Promise<Response> {
+  const { baseUrl, headers } = resolveUpstreamConfig({
+    VIBER_PARSER_URL: process.env.VIBER_PARSER_URL,
+    VIBER_PARSER_TOKEN: process.env.VIBER_PARSER_TOKEN,
+  })
+  return fetch(`${baseUrl}${path}`, {
+    cache: "no-store",
+    ...init,
+    headers: { ...headers, ...init.headers },
+  })
 }
 
 function combinedSignal(request: NextRequest, timeoutMs: number): AbortSignal {
@@ -101,7 +107,6 @@ async function callUpstream(
   path: string,
   init: UpstreamInit = {}
 ): Promise<Response> {
-  const origin = parserOrigin()
   const method = init.method ?? "GET"
   const headers: Record<string, string> = {}
   let body: string | undefined
@@ -114,10 +119,9 @@ async function callUpstream(
     body = init.rawBody
   }
 
-  return fetch(`${origin}${path}`, {
+  return upstreamFetch(path, {
     method,
-    cache: "no-store",
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    headers,
     body,
     signal: combinedSignal(request, init.timeoutMs ?? DEFAULT_TIMEOUT_MS),
   })
@@ -142,10 +146,8 @@ async function passthroughJson(
 }
 
 async function proxySse(request: NextRequest, path: string) {
-  const origin = parserOrigin()
-  const upstream = await fetch(`${origin}${path}`, {
+  const upstream = await upstreamFetch(path, {
     headers: { Accept: "text/event-stream" },
-    cache: "no-store",
     signal: request.signal,
   })
 
@@ -177,9 +179,7 @@ async function proxySse(request: NextRequest, path: string) {
 }
 
 async function handleStatus(request: NextRequest) {
-  const origin = parserOrigin()
-  const tasksRes = await fetch(`${origin}/api/tasks`, {
-    cache: "no-store",
+  const tasksRes = await upstreamFetch("/api/tasks", {
     signal: combinedSignal(request, STATUS_TIMEOUT_MS),
   })
 
@@ -198,8 +198,7 @@ async function handleStatus(request: NextRequest) {
   let detail: TaskDetailDto | null = null
   if (preview.taskId) {
     try {
-      const detailRes = await fetch(`${origin}/api/tasks/${encodeURIComponent(preview.taskId)}`, {
-        cache: "no-store",
+      const detailRes = await upstreamFetch(`/api/tasks/${encodeURIComponent(preview.taskId)}`, {
         signal: combinedSignal(request, STATUS_TIMEOUT_MS),
       })
       if (detailRes.ok) {
@@ -320,7 +319,6 @@ async function handleGroupMembers(request: NextRequest, conversationIdRaw: strin
  * иначе пользователь получал бы обрезанный CSV.
  */
 async function handleExport(request: NextRequest, search: string) {
-  const origin = parserOrigin()
   const controller = new AbortController()
   const abortByClient = () => controller.abort(request.signal?.reason)
   if (request.signal?.aborted) abortByClient()
@@ -329,8 +327,7 @@ async function handleExport(request: NextRequest, search: string) {
   const headersTimer = setTimeout(() => controller.abort(), EXPORT_HEADERS_TIMEOUT_MS)
   let upstream: Response
   try {
-    upstream = await fetch(`${origin}/api/messages/monitored/export${search}`, {
-      cache: "no-store",
+    upstream = await upstreamFetch(`/api/messages/monitored/export${search}`, {
       signal: controller.signal,
     })
   } finally {
@@ -385,9 +382,7 @@ async function handleCollect(request: NextRequest) {
 }
 
 async function handleStopAll(request: NextRequest) {
-  const origin = parserOrigin()
-  const tasksRes = await fetch(`${origin}/api/tasks`, {
-    cache: "no-store",
+  const tasksRes = await upstreamFetch("/api/tasks", {
     signal: combinedSignal(request, STATUS_TIMEOUT_MS),
   })
 

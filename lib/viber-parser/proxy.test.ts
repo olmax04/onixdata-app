@@ -7,6 +7,7 @@ import {
   deriveParserState,
   matchProxyRoute,
   pickActiveTask,
+  resolveUpstreamConfig,
   sanitizeCollectBody,
   sanitizeDecodeBody,
   stepNameOf,
@@ -21,6 +22,47 @@ function summary(overrides: Partial<TaskSummaryDto> & { id: string }): TaskSumma
     ...overrides,
   }
 }
+
+describe("resolveUpstreamConfig", () => {
+  it("по умолчанию ходит на локальный бэкенд без авторизации", () => {
+    expect(resolveUpstreamConfig({})).toEqual({ baseUrl: "http://127.0.0.1:3001", headers: {} })
+  })
+
+  it("принимает внешний адрес VM", () => {
+    expect(resolveUpstreamConfig({ VIBER_PARSER_URL: " http://34.118.10.20:3001/ " })).toEqual({
+      baseUrl: "http://34.118.10.20:3001",
+      headers: {},
+    })
+  })
+
+  it("сохраняет префикс пути reverse proxy и отбрасывает query", () => {
+    expect(
+      resolveUpstreamConfig({ VIBER_PARSER_URL: "https://api.example.com/viber-bot/?x=1#top" }).baseUrl
+    ).toBe("https://api.example.com/viber-bot")
+  })
+
+  it("отправляет токен как Bearer", () => {
+    expect(
+      resolveUpstreamConfig({ VIBER_PARSER_URL: "https://api.example.com", VIBER_PARSER_TOKEN: " s3cret " })
+    ).toEqual({ baseUrl: "https://api.example.com", headers: { Authorization: "Bearer s3cret" } })
+  })
+
+  it("превращает логин и пароль из URL в Basic и убирает их из адреса", () => {
+    const config = resolveUpstreamConfig({ VIBER_PARSER_URL: "https://onix:p%40ss@api.example.com/viber" })
+    expect(config.baseUrl).toBe("https://api.example.com/viber")
+    expect(config.headers.Authorization).toBe(`Basic ${Buffer.from("onix:p@ss").toString("base64")}`)
+  })
+
+  it("не принимает одновременно логин в URL и токен", () => {
+    expect(() =>
+      resolveUpstreamConfig({ VIBER_PARSER_URL: "https://u:p@api.example.com", VIBER_PARSER_TOKEN: "t" })
+    ).toThrow()
+  })
+
+  it("отклоняет протоколы кроме http и https", () => {
+    expect(() => resolveUpstreamConfig({ VIBER_PARSER_URL: "ftp://api.example.com" })).toThrow()
+  })
+})
 
 describe("sanitizeCollectBody", () => {
   it("оставляет только поля, которые есть в CollectParticipantsDto бэкенда", () => {
