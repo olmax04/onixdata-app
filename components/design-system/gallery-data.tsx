@@ -29,7 +29,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatNumber } from "@/lib/format"
 import { metrics, sources, streamMessages } from "@/lib/mock-data"
 
 export function GalleryData() {
@@ -104,7 +103,7 @@ export function GalleryData() {
 
       <DsBlock
         title="Table"
-        hint="Обёртка overflow-x-auto, у колонок min-w, числа справа в font-mono tabular-nums. Заголовки колонок — muted-foreground medium, hover строки — bg-muted/50."
+        hint="Обёртка overflow-x-auto, у колонок min-w, числа справа в font-mono tabular-nums. Заголовки колонок — muted-foreground medium, служебная колонка действий подписана через sr-only."
       >
         <Card>
           <CardContent className="pt-6">
@@ -122,7 +121,7 @@ export function GalleryData() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((message) => (
+                  {rows.map((message, index) => (
                     <TableRow key={message.id}>
                       <TableCell className="font-mono text-xs tabular-nums text-muted-foreground">
                         {message.time}
@@ -132,9 +131,7 @@ export function GalleryData() {
                       </TableCell>
                       <TableCell className="text-sm">{message.author}</TableCell>
                       <TableCell className="text-right font-mono text-sm tabular-nums">
-                        {formatNumber(
-                          sources.find((source) => source.handle === message.source)?.messages ?? 0
-                        )}
+                        {(sources[index]?.messages ?? 0).toLocaleString("ru-RU")}
                       </TableCell>
                       <TableCell>
                         <SentimentBadge sentiment={message.sentiment} />
@@ -234,7 +231,7 @@ export function GalleryData() {
 
       <DsBlock
         title="BrandLogo"
-        hint="Метка-созвездие + вордмарк: «Onix» жирным, «Data» обычным, точка кораллом. Размеры 26 (по умолчанию) и 30 (auth). markOnly оставляет одну метку и добавляет sr-only «OnixData» — с вордмарком название уже есть в тексте. Ссылка-логотип озвучена в обоих случаях."
+        hint="Метка-созвездие + вордмарк: «Onix» жирным, «Data» обычным, точка кораллом. Размеры 26 (по умолчанию) и 30 (auth). markOnly оставляет одну метку. Внутри есть sr-only «OnixData», поэтому ссылка-логотип уже озвучена."
       >
         <div className="flex flex-wrap items-center gap-8 rounded-xl border bg-card p-4">
           <div className="flex flex-col items-start gap-2">

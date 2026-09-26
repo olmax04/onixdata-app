@@ -1,7 +1,6 @@
 import * as React from "react"
 
 import { DsBlock } from "@/components/design-system/section"
-import { formatNumber } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
 interface TypeRole {
@@ -34,14 +33,14 @@ const roles: TypeRole[] = [
     name: "Page title — заголовок страницы",
     classes: "text-base font-semibold sm:text-lg",
     where: "Topbar: h1 текущего раздела, растёт с sm.",
-    sample: "Группы Viber",
+    sample: "Источники",
     preview: "text-base font-semibold sm:text-lg",
   },
   {
     name: "Section title — заголовок блока",
     classes: "text-lg font-semibold",
     where: "h2 над карточками на страницах дашборда.",
-    sample: "Настройки рабочей области",
+    sample: "Подключённые источники",
     preview: "text-lg font-semibold",
   },
   {
@@ -55,7 +54,7 @@ const roles: TypeRole[] = [
     name: "Metric value",
     classes: "text-2xl font-semibold tabular-nums tracking-tight",
     where: "MetricCard: числовое значение метрики.",
-    sample: formatNumber(1284903),
+    sample: "1 284 903",
     preview: "text-2xl font-semibold tabular-nums tracking-tight",
   },
   {
@@ -69,14 +68,14 @@ const roles: TypeRole[] = [
     name: "Body medium",
     classes: "text-sm font-medium",
     where: "Названия сущностей в таблицах и списках, пункты навигации, лейблы.",
-    sample: "Доставка и логистика · Минск",
+    sample: "Крипто Дайджест",
     preview: "text-sm font-medium",
   },
   {
     name: "Caption",
     classes: "text-xs text-muted-foreground",
     where: "Подписи под значением, handle источника, © в auth.",
-    sample: "invite.viber.com/dostavka-minsk",
+    sample: "@crypto_digest_ru",
     preview: "text-xs text-muted-foreground",
   },
   {
@@ -96,8 +95,8 @@ const roles: TypeRole[] = [
   {
     name: "Mono",
     classes: "font-mono tabular-nums",
-    where: "Время, числа в таблицах, API-ключ, имя набора в мок-скриншоте.",
-    sample: `14:32:08 · ${formatNumber(128450)}`,
+    where: "Время, числа в таблицах, API-ключ, имена датасетов в мок-скриншоте.",
+    sample: "14:32:08 · 128 450",
     preview: "font-mono text-sm tabular-nums",
   },
   {

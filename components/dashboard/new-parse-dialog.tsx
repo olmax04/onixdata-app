@@ -9,7 +9,6 @@ import { z } from "zod"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -34,47 +33,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { frequencyOptions, platforms, type Platform } from "@/lib/mock-data"
-
-/** Список платформ ведём в одном месте — схема выводится из него. */
-const platformValues = platforms as [Platform, ...Platform[]]
+import { frequencyOptions, platforms } from "@/lib/mock-data"
 
 const parseSchema = z.object({
-  platform: z.enum(platformValues, {
-    errorMap: () => ({ message: "Выберите платформу" }),
+  platform: z.enum(["Telegram", "WhatsApp", "Discord"], {
+    required_error: "Выберите платформу",
   }),
-  target: z.string().min(3, "Укажите ссылку, канал или группу"),
+  target: z.string().min(3, "Укажите ссылку, канал или сервер"),
   keywords: z.string().min(2, "Укажите хотя бы одно ключевое слово"),
   frequency: z.string().min(1, "Выберите частоту обновления"),
 })
 
 type ParseValues = z.infer<typeof parseSchema>
 
-/**
- * В пустой форме платформа не выбрана, поэтому у поля есть «нулевое» значение "".
- * Без него Select переключался бы между uncontrolled и controlled, а после
- * form.reset() показывал бы прошлый выбор. Отправить "" нельзя — z.enum отбракует.
- */
-type ParseFormValues = Omit<ParseValues, "platform"> & {
-  platform: Platform | ""
-}
-
-const emptyValues: ParseFormValues = {
-  platform: "",
-  target: "",
-  keywords: "",
-  frequency: "",
-}
-
 export function NewParseDialog({ trigger }: { trigger: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
 
-  const form = useForm<ParseFormValues>({
+  const form = useForm<ParseValues>({
     resolver: zodResolver(parseSchema),
-    defaultValues: emptyValues,
+    defaultValues: { target: "", keywords: "", frequency: "" },
   })
 
-  const onSubmit = (values: ParseFormValues) => {
+  const onSubmit = (values: ParseValues) => {
     toast.success("Задача парсинга запущена", {
       description: `${values.platform}: ${values.target}. Демо-режим, сбор не выполняется.`,
     })
@@ -95,8 +75,8 @@ export function NewParseDialog({ trigger }: { trigger: React.ReactNode }) {
         <DialogHeader>
           <DialogTitle>Новая задача парсинга</DialogTitle>
           <DialogDescription>
-            Собираем только публичные сообщения Viber и других мессенджеров.
-            Демо-режим: задача не выполняется.
+            Собираем только публичные сообщения. Демо-режим: задача не
+            выполняется.
           </DialogDescription>
         </DialogHeader>
 
@@ -114,7 +94,7 @@ export function NewParseDialog({ trigger }: { trigger: React.ReactNode }) {
                   <FormLabel>Платформа</FormLabel>
                   <Select
                     onValueChange={field.onChange}
-                    value={field.value || ""}
+                    value={field.value}
                   >
                     <FormControl>
                       <SelectTrigger>
@@ -139,9 +119,9 @@ export function NewParseDialog({ trigger }: { trigger: React.ReactNode }) {
               name="target"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Ссылка, группа или канал</FormLabel>
+                  <FormLabel>Ссылка или канал</FormLabel>
                   <FormControl>
-                    <Input placeholder="invite.viber.com/…" {...field} />
+                    <Input placeholder="@my_public_channel" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -189,11 +169,13 @@ export function NewParseDialog({ trigger }: { trigger: React.ReactNode }) {
             />
 
             <DialogFooter className="gap-2 sm:gap-2">
-              <DialogClose asChild>
-                <Button type="button" variant="ghost">
-                  Отмена
-                </Button>
-              </DialogClose>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setOpen(false)}
+              >
+                Отмена
+              </Button>
               <Button type="submit">Запустить сбор</Button>
             </DialogFooter>
           </form>

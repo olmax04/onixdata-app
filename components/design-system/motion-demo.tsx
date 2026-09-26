@@ -73,8 +73,7 @@ const rules = [
   {
     name: "animate-pulse",
     value: "бесконечно",
-    usage:
-      "Индикатор «в эфире» в панелях Viber (мониторинг и сбор) и фон Skeleton.",
+    usage: "Индикатор «в эфире» на странице потока и фон Skeleton.",
   },
   {
     name: "transition-colors",
@@ -175,7 +174,7 @@ export function MotionDemo() {
           </div>
           <div className="auth-float w-44 rounded-xl border bg-background p-3">
             <p className="truncate font-mono text-[0.7rem] text-muted-foreground">
-              viber_public_groups
+              tg_public_chats
             </p>
             <p className="mt-2 text-base font-semibold leading-none tabular-nums">
               48 210

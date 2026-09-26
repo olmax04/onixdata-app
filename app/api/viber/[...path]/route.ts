@@ -1,41 +1,88 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import {
-  buildStatusPayload,
-  composeAbortSignals,
-  createSseHeartbeatStream,
-  matchProxyRoute,
-  sanitizeCollectBody,
-  sanitizeDecodeBody,
-  type ProxyMatch,
-  type ProxyMethod,
-} from "@/lib/viber-parser/proxy"
-import type { TaskDetailDto, TaskSummaryDto } from "@/lib/viber-parser/types"
+const DEFAULT_PARSER_URL = "http://127.0.0.1:8080"
+const UPSTREAM_TIMEOUT_MS = 65_000
+/**
+ * Статус опрашивается каждые пару секунд, но сервис сбора занят работой с
+ * устройством и может отвечать с задержкой. Короткий таймаут превращал
+ * медленный ответ в «сервис офлайн», поэтому ждём заметно дольше.
+ */
+const STATUS_UPSTREAM_TIMEOUT_MS = 20_000
+/** Таймаут на установление SSE-соединения с апстримом. */
+const SSE_CONNECT_TIMEOUT_MS = 10_000
+/** Через сколько браузер должен повторить попытку, когда апстрим недоступен. */
+const SSE_STUB_RETRY_MS = 10_000
 
-const DEFAULT_PARSER_URL = "http://127.0.0.1:3001"
-
-/** Опрос статуса и деталей задачи: короткий бюджет, чтобы поллинг не залипал. */
-const STATUS_TIMEOUT_MS = 15_000
-/** Обычные управляющие POST/GET-запросы. */
-const DEFAULT_TIMEOUT_MS = 65_000
-/** Дешифровка: рестарт Viber + сетевой синк контактов. */
-const DECODE_TIMEOUT_MS = 360_000
-/** Снятие снимка БД: бут LDPlayer до 180 с. */
-const SYNC_TIMEOUT_MS = 240_000
-/** Экспорт сообщений: ждём только заголовки, тело стримится сколько нужно. */
-const EXPORT_HEADERS_TIMEOUT_MS = 65_000
-/** Периодичность heartbeat в SSE-прокси. */
-const SSE_PING_MS = 15_000
 
 interface RouteContext {
   params: { path: string[] }
 }
 
-export const dynamic = "force-dynamic"
-export const runtime = "nodejs"
+function jsonError(error: string, status: number, headers?: HeadersInit) {
+  return NextResponse.json({ error }, { status, headers })
+}
 
-function jsonError(error: string, status: number) {
-  return NextResponse.json({ error }, { status })
+/**
+ * Открывает поток событий апстрима с таймаутом на УСТАНОВЛЕНИЕ соединения.
+ * Таймаут на всё время жизни ставить нельзя — он оборвал бы живой SSE-поток,
+ * а без таймаута мёртвый апстрим оставляет висящий fetch в процессе Next.
+ */
+async function openUpstreamStream(url: string) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SSE_CONNECT_TIMEOUT_MS)
+  try {
+    return await fetch(url, {
+      headers: { Accept: "text/event-stream" },
+      cache: "no-store",
+      signal: controller.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Ответ, на котором нативный EventSource переподключится сам: он делает это
+ * только при 200 + text/event-stream, на любом другом ответе уходит в CLOSED.
+ */
+function reconnectableStreamStub(reason: string) {
+  return new Response(`retry: ${SSE_STUB_RETRY_MS}
+: ${reason}
+
+`, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  })
+}
+
+/**
+ * Транспортная неудача: сервис не ответил вовремя или недоступен.
+ * Возвращаем HTTP-ошибку, а не «сервис офлайн» — клиент должен отличать
+ * обрыв связи от честного состояния сервиса.
+ */
+function upstreamFailure(error: unknown) {
+  const timedOut = error instanceof Error && error.name === "TimeoutError"
+  return jsonError(
+    timedOut
+      ? "Сервис сбора данных не ответил вовремя"
+      : "Нет связи с сервисом сбора данных",
+    timedOut ? 504 : 502
+  )
+}
+
+/**
+ * Ответы апстрима кешируются, поэтому ручное обновление в панели должно уметь
+ * обойти кеш: параметр `refresh` пробрасываем как есть.
+ */
+function forwardRefresh(request: NextRequest, url: URL) {
+  if (request.nextUrl.searchParams.has("refresh")) {
+    url.searchParams.set("refresh", "1")
+  }
+  return url
 }
 
 function parserOrigin() {
@@ -47,612 +94,768 @@ function parserOrigin() {
   return url.origin
 }
 
-function combinedSignal(request: NextRequest, timeoutMs: number): AbortSignal {
-  return composeAbortSignals([AbortSignal.timeout(timeoutMs), request.signal])
-}
-
-async function readJson(response: Response): Promise<unknown> {
-  const text = await response.text().catch(() => "")
-  if (!text) return null
-  try {
-    return JSON.parse(text)
-  } catch {
-    return { message: text }
-  }
-}
-
-function upstreamMessage(payload: unknown, fallback: string): string {
-  if (payload && typeof payload === "object") {
-    const record = payload as { message?: unknown; error?: unknown }
-    if (typeof record.message === "string" && record.message) return record.message
-    if (Array.isArray(record.message) && record.message.length > 0) {
-      return record.message.map(String).join("; ")
-    }
-    if (typeof record.error === "string" && record.error) return record.error
-  }
-  return fallback
-}
-
-function isTimeout(error: unknown): boolean {
-  return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-}
-
-function failure(error: unknown, request: NextRequest, unavailableStatus = 502) {
-  if (request.signal?.aborted) {
-    // Клиент ушёл — отвечать уже некому.
-    return new NextResponse(null, { status: 499 })
-  }
-  if (isTimeout(error)) {
-    return jsonError("Бэкенд Viber не ответил вовремя", 504)
-  }
-  return jsonError("Бэкенд Viber недоступен", unavailableStatus)
-}
-
-type UpstreamInit = {
-  method?: ProxyMethod
-  body?: unknown
-  rawBody?: string
-  contentType?: string
-  timeoutMs?: number
-}
-
-async function callUpstream(
+async function forwardUpstream(
   request: NextRequest,
-  path: string,
-  init: UpstreamInit = {}
-): Promise<Response> {
+  context: RouteContext,
+  method: "PATCH" | "PUT" | "DELETE"
+) {
+  const pathParts = context.params.path || []
+  const route = pathParts.join("/")
   const origin = parserOrigin()
-  const method = init.method ?? "GET"
-  const headers: Record<string, string> = {}
-  let body: string | undefined
-
-  if (init.body !== undefined) {
-    headers["Content-Type"] = "application/json"
-    body = JSON.stringify(init.body)
-  } else if (init.rawBody !== undefined) {
-    headers["Content-Type"] = init.contentType || "application/json"
-    body = init.rawBody
-  }
-
-  return fetch(`${origin}${path}`, {
+  const search = request.nextUrl.search
+  const init: RequestInit = {
     method,
     cache: "no-store",
-    headers: Object.keys(headers).length > 0 ? headers : undefined,
-    body,
-    signal: combinedSignal(request, init.timeoutMs ?? DEFAULT_TIMEOUT_MS),
-  })
-}
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+  }
+  if (method !== "DELETE") {
+    const bodyText = await request.text()
+    init.headers = {
+      "Content-Type": request.headers.get("content-type") || "application/json",
+    }
+    init.body = bodyText || undefined
+  }
 
-/** Прозрачно отдаёт JSON бэкенда, а ошибки приводит к единому формату { error }. */
-async function passthroughJson(
-  request: NextRequest,
-  path: string,
-  init: UpstreamInit = {},
-  fallbackError = "Бэкенд Viber вернул ошибку"
-) {
-  const upstream = await callUpstream(request, path, init)
+  const upstream = await fetch(`${origin}/api/${route}${search}`, init)
   if (upstream.status === 204) {
     return new NextResponse(null, { status: 204 })
   }
-  const payload = await readJson(upstream)
-  if (!upstream.ok) {
-    return jsonError(upstreamMessage(payload, fallbackError), upstream.status)
+
+  const contentType = upstream.headers.get("content-type") || ""
+  if (contentType.includes("application/json")) {
+    const data = await upstream.json()
+    return NextResponse.json(data, { status: upstream.status })
   }
-  return NextResponse.json(payload ?? null, { status: upstream.status })
-}
-
-async function proxySse(request: NextRequest, path: string) {
-  const origin = parserOrigin()
-  const upstream = await fetch(`${origin}${path}`, {
-    headers: { Accept: "text/event-stream" },
-    cache: "no-store",
-    signal: request.signal,
-  })
-
-  if (!upstream.ok) {
-    const payload = await readJson(upstream)
-    return jsonError(
-      upstreamMessage(payload, `Поток событий недоступен (${upstream.status})`),
-      upstream.status
-    )
-  }
-
-  const contentType = upstream.headers.get("content-type") ?? ""
-  if (!contentType.includes("text/event-stream") || !upstream.body) {
-    await upstream.body?.cancel().catch(() => undefined)
-    return jsonError("Бэкенд вернул не поток событий", 502)
-  }
-
-  const stream = upstream.body.pipeThrough(createSseHeartbeatStream(SSE_PING_MS))
-
-  return new Response(stream, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: { "Content-Type": contentType },
   })
 }
 
-async function handleStatus(request: NextRequest) {
-  const origin = parserOrigin()
-  const tasksRes = await fetch(`${origin}/api/tasks`, {
-    cache: "no-store",
-    signal: combinedSignal(request, STATUS_TIMEOUT_MS),
-  })
-
-  if (!tasksRes.ok) {
-    const payload = await readJson(tasksRes)
-    return jsonError(
-      upstreamMessage(payload, `Бэкенд Viber ответил ${tasksRes.status}`),
-      tasksRes.status >= 500 ? 503 : tasksRes.status
-    )
-  }
-
-  const raw = await readJson(tasksRes)
-  const tasks = Array.isArray(raw) ? (raw as TaskSummaryDto[]) : []
-  const preview = buildStatusPayload({ tasks, detail: null, fetchedAt: new Date().toISOString() })
-
-  let detail: TaskDetailDto | null = null
-  if (preview.taskId) {
-    try {
-      const detailRes = await fetch(`${origin}/api/tasks/${encodeURIComponent(preview.taskId)}`, {
-        cache: "no-store",
-        signal: combinedSignal(request, STATUS_TIMEOUT_MS),
-      })
-      if (detailRes.ok) {
-        const detailPayload = await readJson(detailRes)
-        if (detailPayload && typeof detailPayload === "object") {
-          detail = detailPayload as TaskDetailDto
-        }
-      } else {
-        await detailRes.body?.cancel().catch(() => undefined)
-      }
-    } catch {
-      // Список задач получен — отдаём статус без detail, клиент не теряет состояние.
-      detail = null
-    }
-  }
-
-  return NextResponse.json(
-    buildStatusPayload({ tasks, detail, fetchedAt: new Date().toISOString() })
-  )
-}
-
-async function handleGroups(request: NextRequest) {
-  const upstream = await callUpstream(request, "/api/groups?all=true")
-  const payload = await readJson(upstream)
-
-  if (!upstream.ok) {
-    return jsonError(
-      upstreamMessage(payload, "Не удалось загрузить группы: эмулятор недоступен"),
-      upstream.status
-    )
-  }
-
-  const list = (Array.isArray(payload) ? payload : []) as Array<{
-    id: number
-    type: number
-    groupId: string | null
-    name: string | null
-    messageCount: number
-    participantCount: number
-    lastMessageDate?: string | null
-    unreadCount?: number
-  }>
-
-  const groups = list.map((g) => ({
-    conversationId: g.id,
-    groupId: g.groupId ? Number(g.groupId) || 0 : 0,
-    name: g.name,
-    conversationType: g.type,
-    memberCount: g.participantCount,
-    messageCount: g.messageCount,
-    lastMessageDate: g.lastMessageDate,
-    unreadCount: g.unreadCount,
-  }))
-
-  return NextResponse.json({ count: groups.length, groups })
-}
-
-async function handleGroupMembers(request: NextRequest, conversationIdRaw: string) {
-  const conversationId = Number(conversationIdRaw)
-  const upstream = await callUpstream(
-    request,
-    `/api/groups/${encodeURIComponent(conversationIdRaw)}/participants`
-  )
-  const payload = await readJson(upstream)
-
-  if (!upstream.ok) {
-    return jsonError(
-      upstreamMessage(payload, `Не удалось загрузить участников группы ${conversationIdRaw}`),
-      upstream.status
-    )
-  }
-
-  const participants = (Array.isArray(payload) ? payload : []) as Array<{
-    id: number
-    memberId: string | null
-    number: string | null
-    name: string | null
-    contactName: string | null
-    viberName: string | null
-    groupRole: number | null
-    roleLabel: string
-    active: boolean
-    isSelf?: boolean
-    isOnline?: boolean
-    lastSeen?: string | null
-  }>
-
-  const members = participants.map((p) => {
-    const rawNumber = p.number?.trim() || ""
-    const isEncrypted = !rawNumber || rawNumber.toLowerCase().startsWith("em")
-    const isDecoded = !isEncrypted
-    return {
-      participantId: p.id,
-      memberId: p.memberId,
-      encryptedMemberId: isEncrypted ? rawNumber : null,
-      phoneNumber: isDecoded ? rawNumber : "Ожидает дешифровки",
-      rawNumber: rawNumber || null,
-      isDecoded,
-      name: p.name || p.viberName || p.contactName || null,
-      roleLabel: p.roleLabel,
-      isSelf: p.isSelf ?? p.id === 1,
-      isOnline: p.isOnline,
-      lastSeen: p.lastSeen,
-    }
-  })
-
-  return NextResponse.json({
-    conversationId: Number.isFinite(conversationId) ? conversationId : conversationIdRaw,
-    count: members.length,
-    members,
-    rawParticipants: participants,
-  })
-}
-
-/**
- * Выгрузка сообщений стримится телом ответа и может идти минутами. Таймаут держим
- * только до получения заголовков: после них поток рвётся лишь уходом клиента,
- * иначе пользователь получал бы обрезанный CSV.
- */
-async function handleExport(request: NextRequest, search: string) {
-  const origin = parserOrigin()
-  const controller = new AbortController()
-  const abortByClient = () => controller.abort(request.signal?.reason)
-  if (request.signal?.aborted) abortByClient()
-  else request.signal?.addEventListener("abort", abortByClient, { once: true })
-
-  const headersTimer = setTimeout(() => controller.abort(), EXPORT_HEADERS_TIMEOUT_MS)
-  let upstream: Response
-  try {
-    upstream = await fetch(`${origin}/api/messages/monitored/export${search}`, {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-  } finally {
-    clearTimeout(headersTimer)
-  }
-
-  if (!upstream.ok) {
-    const payload = await readJson(upstream)
-    return jsonError(upstreamMessage(payload, "Не удалось выгрузить сообщения"), upstream.status)
-  }
-
-  const headers = new Headers()
-  headers.set("Content-Type", upstream.headers.get("content-type") || "application/octet-stream")
-  headers.set("Cache-Control", "no-store")
-  const disposition = upstream.headers.get("content-disposition")
-  if (disposition) headers.set("Content-Disposition", disposition)
-
-  return new Response(upstream.body, { status: upstream.status, headers })
-}
-
-async function handleCollect(request: NextRequest) {
-  const raw = await request.json().catch(() => null)
-  const sanitized = sanitizeCollectBody(raw)
-  if (!sanitized.ok) {
-    return jsonError(sanitized.error, 400)
-  }
-
-  const upstream = await callUpstream(request, "/api/participants/collect", {
-    method: "POST",
-    body: sanitized.value,
-  })
-  const payload = await readJson(upstream)
-
-  if (!upstream.ok) {
-    return jsonError(
-      upstreamMessage(payload, "Не удалось запустить сбор участников"),
-      upstream.status
-    )
-  }
-
-  const accepted = (payload ?? {}) as { taskId?: string; message?: string; status?: string }
-  return NextResponse.json(
-    {
-      taskId: accepted.taskId ?? null,
-      message: accepted.message ?? "Сбор участников запущен",
-      group: sanitized.value.group,
-      groupName: sanitized.value.group,
-      status: accepted.status ?? "initializing",
-    },
-    { status: 200 }
-  )
-}
-
-async function handleStopAll(request: NextRequest) {
-  const origin = parserOrigin()
-  const tasksRes = await fetch(`${origin}/api/tasks`, {
-    cache: "no-store",
-    signal: combinedSignal(request, STATUS_TIMEOUT_MS),
-  })
-
-  if (!tasksRes.ok) {
-    await tasksRes.body?.cancel().catch(() => undefined)
-    return jsonError("Не удалось получить список задач для остановки", 502)
-  }
-
-  const raw = await readJson(tasksRes)
-  const tasks = (Array.isArray(raw) ? raw : []) as TaskSummaryDto[]
-  const active = tasks.filter(
-    (t) => t.status === "initializing" || t.status === "starting" || t.status === "running"
-  )
-
-  for (const task of active) {
-    await callUpstream(request, `/api/tasks/${encodeURIComponent(task.id)}/stop`, {
-      method: "POST",
-    }).catch(() => undefined)
-  }
-
-  return NextResponse.json({
-    message: active.length > 0 ? "Сбор успешно остановлен" : "Активных задач нет",
-    stopped: active.map((t) => t.id),
-  })
-}
-
-async function handleDecode(request: NextRequest) {
-  const raw = await request.json().catch(() => null)
-  const upstream = await callUpstream(request, "/api/database/decode", {
-    method: "POST",
-    body: sanitizeDecodeBody(raw),
-    timeoutMs: DECODE_TIMEOUT_MS,
-  })
-  const payload = await readJson(upstream)
-
-  if (!upstream.ok) {
-    return jsonError(
-      upstreamMessage(payload, "Ошибка дешифровки базы данных"),
-      upstream.status
-    )
-  }
-
-  return NextResponse.json(payload ?? null)
-}
-
-async function handleDatabaseSync(request: NextRequest) {
-  const upstream = await callUpstream(request, "/api/database/sync", {
-    method: "POST",
-    timeoutMs: SYNC_TIMEOUT_MS,
-  })
-  const payload = await readJson(upstream)
-
-  if (!upstream.ok) {
-    return jsonError(
-      upstreamMessage(payload, "Не удалось синхронизировать базу с эмулятором"),
-      upstream.status
-    )
-  }
-
-  const result = (payload ?? {}) as Record<string, unknown>
-  return NextResponse.json({
-    ...result,
-    message:
-      typeof result.message === "string" && result.message
-        ? result.message
-        : "База данных успешно синхронизирована с эмулятором",
-  })
-}
-
-async function dispatchGet(request: NextRequest, match: ProxyMatch, search: string) {
-  switch (match.kind) {
-    case "status":
-      return handleStatus(request)
-    case "groups":
-      return handleGroups(request)
-    case "group-members":
-      return handleGroupMembers(request, match.params?.id ?? "")
-    case "group-detail":
-      return passthroughJson(request, `/api/groups/${encodeURIComponent(match.params?.id ?? "")}`)
-    case "database-stats":
-      return passthroughJson(request, "/api/database/stats")
-    case "tasks":
-      return passthroughJson(request, `/api/tasks${search}`, { timeoutMs: STATUS_TIMEOUT_MS })
-    case "task-detail":
-      return passthroughJson(request, `/api/tasks/${encodeURIComponent(match.params?.id ?? "")}`, {
-        timeoutMs: STATUS_TIMEOUT_MS,
-      })
-    case "task-participants":
-      return passthroughJson(
-        request,
-        `/api/tasks/${encodeURIComponent(match.params?.id ?? "")}/participants`
-      )
-    case "task-events":
-      return proxySse(request, `/api/tasks/${encodeURIComponent(match.params?.id ?? "")}/events`)
-    case "messages-events":
-      return proxySse(request, "/api/messages/monitor/events")
-    case "messages-monitored":
-      return passthroughJson(request, `/api/messages/monitored${search}`)
-    case "messages-monitored-export":
-      return handleExport(request, search)
-    case "monitor-status":
-      return passthroughJson(request, "/api/messages/monitor/status")
-    case "monitor-groups":
-      return passthroughJson(request, "/api/messages/monitor/groups")
-    case "broadcast":
-      return passthroughJson(
-        request,
-        `/api/${match.upstreamPath}${search}`,
-        {},
-        "Бэкенд не поддерживает рассылку"
-      )
-    case "viber-status":
-      return passthroughJson(request, "/api/viber/status", {}, "Не удалось получить статус Viber")
-    case "users":
-      return passthroughJson(request, `/api/users${search}`, {}, "Не удалось получить список пользователей")
-    default:
-      return jsonError("Маршрут не поддерживается", 404)
-  }
-}
-
-async function dispatchPost(request: NextRequest, match: ProxyMatch, search: string) {
-  switch (match.kind) {
-    case "start":
-      return NextResponse.json({ message: "Сессия активна и готова к сбору" })
-    case "stop":
-      return handleStopAll(request)
-    case "auth-phone":
-      return passthroughJson(
-        request,
-        "/api/auth/phone",
-        { method: "POST", rawBody: (await request.text()) || "{}" },
-        "Не удалось отправить номер телефона"
-      )
-    case "auth-code":
-      return passthroughJson(
-        request,
-        "/api/auth/code",
-        { method: "POST", rawBody: (await request.text()) || "{}" },
-        "Не удалось подтвердить код активации"
-      )
-    case "viber-start":
-      return passthroughJson(
-        request,
-        "/api/viber/start",
-        { method: "POST", rawBody: (await request.text()) || "{}" },
-        "Не удалось запустить Viber"
-      )
-    case "users-sync-group":
-      return passthroughJson(
-        request,
-        `/api/users/sync/group/${encodeURIComponent(match.params?.id ?? "")}`,
-        { method: "POST" },
-        "Не удалось синхронизировать участников группы"
-      )
-    case "users-sync-task":
-      return passthroughJson(
-        request,
-        `/api/users/sync/task/${encodeURIComponent(match.params?.id ?? "")}`,
-        { method: "POST" },
-        "Не удалось синхронизировать участников задачи"
-      )
-    case "task-stop":
-      return passthroughJson(
-        request,
-        `/api/tasks/${encodeURIComponent(match.params?.id ?? "")}/stop`,
-        { method: "POST" },
-        "Не удалось остановить задачу"
-      )
-    case "collect":
-      return handleCollect(request)
-    case "decode":
-      return handleDecode(request)
-    case "database-sync":
-      return handleDatabaseSync(request)
-    case "monitor-start":
-      return passthroughJson(
-        request,
-        "/api/messages/monitor/start",
-        { method: "POST", rawBody: (await request.text()) || "{}" },
-        "Не удалось запустить мониторинг"
-      )
-    case "monitor-stop":
-      return passthroughJson(
-        request,
-        "/api/messages/monitor/stop",
-        { method: "POST" },
-        "Не удалось остановить мониторинг"
-      )
-    case "monitor-group-toggle":
-      return passthroughJson(
-        request,
-        `/api/messages/monitor/groups/${encodeURIComponent(match.params?.id ?? "")}/${match.params?.action ?? "enable"}`,
-        { method: "POST", rawBody: (await request.text()) || "{}" },
-        "Не удалось изменить мониторинг группы"
-      )
-    case "online-status":
-      return passthroughJson(
-        request,
-        "/api/participants/online-status",
-        { method: "POST", rawBody: (await request.text()) || "{}" },
-        "Не удалось получить статусы активности"
-      )
-    case "broadcast":
-      return passthroughJson(
-        request,
-        `/api/${match.upstreamPath}${search}`,
-        { method: "POST", rawBody: (await request.text()) || "{}" },
-        "Бэкенд не поддерживает рассылку"
-      )
-    default:
-      return jsonError("Маршрут не поддерживается", 404)
-  }
-}
+export const dynamic = "force-dynamic"
+export const runtime = "nodejs"
 
 export async function GET(request: NextRequest, context: RouteContext) {
-  const match = matchProxyRoute("GET", context.params.path ?? [])
-  if (!match) return jsonError("Маршрут не поддерживается", 404)
+  const pathParts = context.params.path || []
+  const route = pathParts.join("/")
+  const origin = parserOrigin()
+  const search = request.nextUrl.search
 
   try {
-    return await dispatchGet(request, match, request.nextUrl.search)
+    // 1. Status: /api/viber/status
+    // Сетевая ошибка или таймаут НЕ возвращают «сервис офлайн»: они уходят во
+    // внешний catch и отдают 502/504, чтобы клиент отличил обрыв связи от
+    // реально недоступного сервиса и сохранил последнее известное состояние.
+    if (route === "status") {
+      const deviceId = request.nextUrl.searchParams.get("deviceId")
+      const upstreamTasksUrl = deviceId
+        ? `${origin}/api/tasks?deviceId=${encodeURIComponent(deviceId)}`
+        : `${origin}/api/tasks`
+
+      const tasksRes = await fetch(upstreamTasksUrl, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(STATUS_UPSTREAM_TIMEOUT_MS),
+      })
+
+      if (!tasksRes.ok) {
+        return NextResponse.json({
+          state: "ERROR",
+          isDriverActive: false,
+          taskId: null,
+          latestTaskStatus: null,
+          currentStep: null,
+          progress: null,
+          groupName: null,
+          error: `Сервис сбора данных ответил ошибкой (${tasksRes.status})`,
+        })
+      }
+
+      const allTasks = (await tasksRes.json()) as Array<{
+        id: string
+        status: string
+        groupTarget: string
+        deviceId?: string | null
+        groupName?: string | null
+        currentStep?: string | null
+        progress?: Record<string, unknown>
+      }>
+
+      const tasks = deviceId
+        ? allTasks.filter((t) => {
+            if (!t.deviceId || t.deviceId === "default") return true
+            if (t.deviceId === deviceId) return true
+            // Сопоставление имени инстанса и сетевого serial
+            const devLower = deviceId.toLowerCase()
+            const taskDevLower = (t.deviceId || "").toLowerCase()
+            if (devLower === "worker" && (taskDevLower.includes(":5555") || taskDevLower === "worker")) return true
+            if (devLower === "worker-2" && (taskDevLower.includes(":5556") || taskDevLower === "worker-2")) return true
+            return false
+          })
+        : allTasks
+
+      const activeTask = tasks.find(
+        (t) => t.status === "initializing" || t.status === "starting" || t.status === "running"
+      )
+
+      if (activeTask) {
+        const rawStep = activeTask.currentStep as unknown
+        const stepName =
+          typeof rawStep === "object" && rawStep !== null && "step" in rawStep
+            ? String((rawStep as { step: unknown }).step)
+            : typeof rawStep === "string"
+              ? rawStep
+              : null
+
+        return NextResponse.json({
+          state: activeTask.status === "running" ? "RUNNING" : "INITIALIZING",
+          isDriverActive: true,
+          taskId: activeTask.id,
+          latestTaskStatus: activeTask.status,
+          currentStep: stepName,
+          progress: activeTask.progress ?? null,
+          groupName: activeTask.groupName ?? activeTask.groupTarget,
+        })
+      }
+
+      const latestTask = tasks[0]
+      return NextResponse.json({
+        state: latestTask && latestTask.status === "error" ? "ERROR" : "IDLE",
+        isDriverActive: true,
+        taskId: latestTask ? latestTask.id : null,
+        latestTaskStatus: latestTask ? latestTask.status : null,
+        currentStep: null,
+        progress: latestTask?.progress ?? null,
+        groupName: latestTask?.groupName ?? latestTask?.groupTarget ?? null,
+      })
+    }
+
+    // 2. Groups: /api/viber/groups
+    if (route === "groups") {
+      const deviceId = request.nextUrl.searchParams.get("deviceId")
+      const onDevice = request.nextUrl.searchParams.get("onDevice")
+      const groupsUrl = new URL(`${origin}/api/groups`)
+      groupsUrl.searchParams.set("all", "true")
+      if (deviceId) {
+        groupsUrl.searchParams.set("deviceId", deviceId)
+      }
+      // Мониторингу нужны только группы, открытые на инстансе; панели парсера —
+      // весь список вместе с архивом, поэтому флаг проносится как есть.
+      if (onDevice) {
+        groupsUrl.searchParams.set("onDevice", onDevice)
+      }
+      forwardRefresh(request, groupsUrl)
+
+      const res = await fetch(groupsUrl.toString(), {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        const payload = data as { message?: string; error?: string } | null
+        const message = payload?.message || payload?.error || "Не удалось загрузить группы: устройство недоступно"
+        return jsonError(message, res.status)
+      }
+
+      const list = (data ?? []) as Array<{
+        id: number
+        type: number
+        groupId: string | null
+        name: string | null
+        messageCount: number
+        participantCount: number
+        lastMessageDate?: string | null
+        unreadCount?: number
+        onDevice?: boolean
+      }>
+
+      const groups = list.map((g) => ({
+        conversationId: g.id,
+        // Row id — это НЕ глобальный ключ группы: подстановка превращала бы
+        // беседу без conversations.group_id в несуществующий ключ, по которому
+        // мониторинг отвечает 404.
+        groupId: g.groupId ?? null,
+        name: g.name,
+        conversationType: g.type,
+        memberCount: g.participantCount,
+        messageCount: g.messageCount,
+        lastMessageDate: g.lastMessageDate,
+        unreadCount: g.unreadCount,
+        onDevice: g.onDevice,
+      }))
+
+      return NextResponse.json({
+        count: groups.length,
+        groups,
+      })
+    }
+
+    // 3. Group Members: /api/viber/groups/:id/members or /api/viber/groups/:id/participants
+    if (
+      pathParts.length === 3 &&
+      pathParts[0] === "groups" &&
+      (pathParts[2] === "members" || pathParts[2] === "participants")
+    ) {
+      const groupTargetId = pathParts[1]
+      const deviceId = request.nextUrl.searchParams.get("deviceId")
+      const participantsUrl = new URL(`${origin}/api/groups/${encodeURIComponent(groupTargetId)}/participants`)
+      if (deviceId) {
+        participantsUrl.searchParams.set("deviceId", deviceId)
+      }
+      forwardRefresh(request, participantsUrl)
+
+      const res = await fetch(participantsUrl.toString(), {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+
+      if (!res.ok) {
+        return jsonError(`Failed to fetch group members for ID ${groupTargetId}`, res.status)
+      }
+
+      const participants = (await res.json()) as Array<{
+        id: number
+        memberId: string | null
+        number: string | null
+        name: string | null
+        contactName: string | null
+        viberName: string | null
+        groupRole: number | null
+        roleLabel: string
+        active: boolean
+        isSelf?: boolean
+        isOnline?: boolean
+        lastSeen?: string | null
+      }>
+
+      const members = participants.map((p) => {
+        const rawNumber = p.number?.trim() || ""
+        const isEncrypted = !rawNumber || rawNumber.toLowerCase().startsWith("em")
+        const isDecoded = !isEncrypted
+        return {
+          participantId: p.id,
+          memberId: p.memberId,
+          encryptedMemberId: isEncrypted ? rawNumber : null,
+          phoneNumber: isDecoded ? rawNumber : "Ожидает дешифровки",
+          rawNumber: rawNumber || null,
+          isDecoded,
+          name: p.name || p.viberName || p.contactName || null,
+          roleLabel: p.roleLabel,
+          isSelf: p.isSelf ?? (p.id === 1),
+          isOnline: p.isOnline,
+          lastSeen: p.lastSeen,
+        }
+      })
+
+      const parsedConversationId = Number.parseInt(groupTargetId, 10)
+      const conversationId = Number.isFinite(parsedConversationId) ? parsedConversationId : groupTargetId
+
+      // Полную копию исходных участников не отдаём: клиент её не читает,
+      // а ответ на большой группе становится вдвое тяжелее.
+      return NextResponse.json({
+        conversationId,
+        count: members.length,
+        members,
+      })
+    }
+
+    // 4. Group Detail: /api/viber/groups/:id
+    if (pathParts.length === 2 && pathParts[0] === "groups") {
+      const groupId = pathParts[1]
+      const res = await fetch(`${origin}/api/groups/${groupId}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 5. Database stats: /api/viber/database/stats
+    if (route === "database/stats") {
+      const deviceId = request.nextUrl.searchParams.get("deviceId")
+      const statsUrl = new URL(`${origin}/api/database/stats`)
+      if (deviceId) {
+        statsUrl.searchParams.set("deviceId", deviceId)
+      }
+      forwardRefresh(request, statsUrl)
+      const res = await fetch(statsUrl.toString(), {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 6. SSE Task Events: /api/viber/tasks/:id/events
+    if (
+      pathParts.length === 3 &&
+      pathParts[0] === "tasks" &&
+      pathParts[2] === "events"
+    ) {
+      const taskId = pathParts[1]
+      const upstream = await openUpstreamStream(`${origin}/api/tasks/${taskId}/events`)
+
+      // Не выдаём 200 и пустой поток поверх ошибки апстрима: иначе клиент
+      // видит «открылся и закрылся» и бесконечно переподключается к 404.
+      //
+      // ОГРАНИЧЕНИЕ: панель трактует 404 как «задачи больше нет» и перестаёт её
+      // отслеживать. Это верно только для одного инстанса API — реестр задач
+      // живёт в памяти процесса (src/tasks/tasks.service.ts). При нескольких
+      // репликах (Railway) запрос может попасть в другую реплику, и 404 будет
+      // ложным; поток событий там не работает в принципе — нужен общий стор.
+      if (!upstream.ok) {
+        await upstream.body?.cancel()
+        return jsonError(
+          upstream.status === 404
+            ? `Задача ${taskId} не найдена`
+            : `Поток событий недоступен (${upstream.status})`,
+          upstream.status
+        )
+      }
+
+      return new Response(upstream.body, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+        },
+      })
+    }
+
+    // 7. Task Participants: /api/viber/tasks/:id/participants
+    if (
+      pathParts.length === 3 &&
+      pathParts[0] === "tasks" &&
+      pathParts[2] === "participants"
+    ) {
+      const taskId = pathParts[1]
+      const res = await fetch(`${origin}/api/tasks/${taskId}/participants`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 8. Single Task: /api/viber/tasks/:id
+    if (pathParts.length === 2 && pathParts[0] === "tasks") {
+      const taskId = pathParts[1]
+      const res = await fetch(`${origin}/api/tasks/${taskId}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 9. Tasks list: /api/viber/tasks
+    if (route === "tasks") {
+      const res = await fetch(`${origin}/api/tasks${search}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 10. SSE Messages Events: /api/viber/messages/events or /api/viber/messages/monitor/events
+    if (route === "messages/events" || route === "messages/monitor/events") {
+      // Потребитель ленты монитора полагается на нативный авто-реконнект
+      // EventSource, а тот работает только при 200 + text/event-stream: на любом
+      // другом ответе поток уходит в CLOSED навсегда. Поэтому и ошибку апстрима,
+      // и его полное отсутствие (ECONNREFUSED при ручном перезапуске API)
+      // отдаём как корректный поток с `retry:`.
+      let upstream: Response
+      try {
+        upstream = await openUpstreamStream(`${origin}/api/messages/monitor/events`)
+      } catch (error) {
+        const timedOut = error instanceof Error && error.name === "AbortError"
+        return reconnectableStreamStub(
+          timedOut ? "upstream did not respond in time" : "upstream unavailable"
+        )
+      }
+
+      if (!upstream.ok) {
+        await upstream.body?.cancel()
+        return reconnectableStreamStub(`upstream unavailable (${upstream.status})`)
+      }
+
+      return new Response(upstream.body, {
+        headers: {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache, no-transform",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      })
+    }
+
+    // 11. Export monitored messages: /api/viber/messages/monitored/export
+    if (route === "messages/monitored/export") {
+      const res = await fetch(`${origin}/api/messages/monitored/export${search}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const headers = new Headers()
+      headers.set(
+        "Content-Type",
+        res.headers.get("content-type") || "application/octet-stream"
+      )
+      headers.set("Cache-Control", "no-store")
+      const disposition = res.headers.get("content-disposition")
+      if (disposition) {
+        headers.set("Content-Disposition", disposition)
+      }
+      return new Response(res.body, { status: res.status, headers })
+    }
+
+    // 12. Monitored Messages list: /api/viber/messages/monitored
+    if (route === "messages/monitored") {
+      const res = await fetch(`${origin}/api/messages/monitored${search}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 13. Messages monitor status: /api/viber/messages/monitor/status
+    // Строку запроса проносим насквозь: статус фильтруется по ?deviceId=.
+    if (route === "messages/monitor/status") {
+      const res = await fetch(`${origin}/api/messages/monitor/status${search}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 14. QR auth status: /api/viber/auth/qr/status
+    // Отдельным маршрутом, а не общим проксированием: статус опрашивается
+    // каждые пару секунд и должен жить по своему, короткому таймауту.
+    if (route === "auth/qr/status" || route === "viber/auth/qr/status") {
+      const res = await fetch(`${origin}/api/auth/qr/status${search}`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(STATUS_UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // Fallback GET proxy
+    const fallbackRes = await fetch(`${origin}/api/${route}${search}`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    })
+    const contentType = fallbackRes.headers.get("content-type") || ""
+    if (contentType.includes("application/json")) {
+      const data = await fallbackRes.json()
+      return NextResponse.json(data, { status: fallbackRes.status })
+    }
+    return new Response(fallbackRes.body, {
+      status: fallbackRes.status,
+      headers: { "Content-Type": contentType },
+    })
   } catch (error) {
-    // Для статуса важно отличать «бэкенд не поднят» (503) от ошибки задачи.
-    return failure(error, request, match.kind === "status" ? 503 : 502)
+    return upstreamFailure(error)
   }
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const match = matchProxyRoute("POST", context.params.path ?? [])
-  if (!match) return jsonError("Маршрут не поддерживается", 404)
+  const pathParts = context.params.path || []
+  const route = pathParts.join("/")
+  const origin = parserOrigin()
+  const search = request.nextUrl.search
 
   try {
-    return await dispatchPost(request, match, request.nextUrl.search)
+    // 1. Start Session: /api/viber/start (legacy)
+    if (route === "start") {
+      return NextResponse.json({ message: "Сессия активна и готова к сбору" })
+    }
+
+    // 2. Stop Session: /api/viber/stop
+    if (route === "stop") {
+      try {
+        const tasksRes = await fetch(`${origin}/api/tasks`, { cache: "no-store" })
+        if (tasksRes.ok) {
+          const tasks = (await tasksRes.json()) as Array<{ id: string; status: string }>
+          const activeTasks = tasks.filter(
+            (t) => t.status === "initializing" || t.status === "starting" || t.status === "running"
+          )
+          for (const t of activeTasks) {
+            await fetch(`${origin}/api/tasks/${t.id}/stop`, { method: "POST" })
+          }
+        }
+      } catch {
+        // ignore
+      }
+      return NextResponse.json({ message: "Сбор успешно остановлен" })
+    }
+
+    // 3. Stop specific task: /api/viber/tasks/:id/stop
+    if (
+      pathParts.length === 3 &&
+      pathParts[0] === "tasks" &&
+      pathParts[2] === "stop"
+    ) {
+      const taskId = pathParts[1]
+      const res = await fetch(`${origin}/api/tasks/${taskId}/stop`, { method: "POST" })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 4. Collect / Scroll: /api/viber/participants/collect or legacy scroll-members / scroll-50
+    if (
+      route === "participants/collect" ||
+      route === "scroll-members" ||
+      route === "scroll-50" ||
+      route === "parser/scroll-members" ||
+      route === "parser/scroll-50" ||
+      route === "collect"
+    ) {
+      let body: Record<string, unknown> = {}
+      try {
+        body = (await request.json()) as Record<string, unknown>
+      } catch {
+        body = {}
+      }
+
+      const group =
+        typeof body.group === "string" && body.group.trim()
+          ? body.group.trim()
+          : typeof body.groupName === "string"
+            ? body.groupName.trim()
+            : ""
+
+      if (!group) {
+        return jsonError("group is required", 400)
+      }
+
+      const pageLimit =
+        typeof body.pageLimit === "number"
+          ? body.pageLimit
+          : typeof body.limit === "number"
+            ? body.limit
+            : undefined
+
+      const scrollPages = typeof body.scrollPages === "number" ? body.scrollPages : undefined
+      const allowPartial = typeof body.allowPartial === "boolean" ? body.allowPartial : undefined
+      const restartApp = typeof body.restartApp === "boolean" ? body.restartApp : undefined
+      const forceRefresh = typeof body.forceRefresh === "boolean" ? body.forceRefresh : undefined
+      const deviceId = typeof body.deviceId === "string" ? body.deviceId : undefined
+
+      const collectRes = await fetch(`${origin}/api/participants/collect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          group,
+          pageLimit,
+          scrollPages,
+          allowPartial,
+          restartApp,
+          forceRefresh,
+          deviceId,
+        }),
+      })
+
+      const collectPayload = (await collectRes.json()) as {
+        taskId?: string
+        message?: string
+      }
+
+      if (!collectRes.ok) {
+        return jsonError(
+          collectPayload.message || "Не удалось запустить сбор участников",
+          collectRes.status
+        )
+      }
+
+      return NextResponse.json({
+        message: "Сбор участников запущен",
+        groupName: group,
+        group,
+        limit: pageLimit ?? 50,
+        pageLimit,
+        clearDatabase: false,
+        taskId: collectPayload.taskId,
+      })
+    }
+
+    // 5. Decode: /api/viber/database/decode or /api/viber/participants/decode
+    if (route === "database/decode" || route === "participants/decode") {
+      let body: Record<string, unknown> = {}
+      try {
+        body = (await request.json()) as Record<string, unknown>
+      } catch {
+        body = {}
+      }
+
+      const deviceId =
+        (typeof body.deviceId === "string" ? body.deviceId : null) ||
+        request.nextUrl.searchParams.get("deviceId")
+      const decodeUrl = deviceId
+        ? `${origin}/api/database/decode?deviceId=${encodeURIComponent(deviceId)}`
+        : `${origin}/api/database/decode`
+
+      const decodeRes = await fetch(decodeUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dryRun: body.dryRun ?? false,
+          includeSelf: body.includeSelf ?? false,
+          limit: typeof body.limit === "number" ? body.limit : undefined,
+          restartApp: typeof body.restartApp === "boolean" ? body.restartApp : true,
+          waitForSyncSeconds: typeof body.waitForSyncSeconds === "number" ? body.waitForSyncSeconds : 10,
+        }),
+      })
+
+      const decodePayload = (await decodeRes.json()) as Record<string, unknown>
+
+      if (!decodeRes.ok) {
+        return jsonError(
+          String(decodePayload.message || "Ошибка дешифровки базы данных"),
+          decodeRes.status
+        )
+      }
+
+      return NextResponse.json({
+        dryRun: decodePayload.dryRun ?? false,
+        read: decodePayload.read ?? 0,
+        decodedCount: decodePayload.decodedCount ?? 0,
+        updated: decodePayload.updated ?? 0,
+        changedRows: decodePayload.changedRows ?? 0,
+        skippedCount: decodePayload.skippedCount ?? 0,
+        invalidCount: decodePayload.invalidCount ?? 0,
+        backupPath: null,
+        decoded: decodePayload.decoded ?? [],
+      })
+    }
+
+    // 6. Database Sync: /api/viber/database/sync or /api/viber/clear-database
+    if (
+      route === "database/sync" ||
+      route === "clear-database" ||
+      route === "parser/clear-database"
+    ) {
+      const deviceId = request.nextUrl.searchParams.get("deviceId")
+      const syncUrl = deviceId
+        ? `${origin}/api/database/sync?deviceId=${encodeURIComponent(deviceId)}`
+        : `${origin}/api/database/sync`
+
+      const syncRes = await fetch(syncUrl, { method: "POST" })
+      const syncPayload = (await syncRes.json()) as Record<string, unknown>
+
+      return NextResponse.json({
+        message: syncPayload.message || "Данные успешно синхронизированы",
+        ...syncPayload,
+      })
+    }
+
+    // 7. Messages monitor start: /api/viber/messages/monitor/start
+    if (route === "messages/monitor/start") {
+      const bodyText = await request.text()
+      const res = await fetch(`${origin}/api/messages/monitor/start${search}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: bodyText || "{}",
+      })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 8. Messages monitor stop: /api/viber/messages/monitor/stop
+    if (route === "messages/monitor/stop") {
+      const res = await fetch(`${origin}/api/messages/monitor/stop`, { method: "POST" })
+      const data = await res.json()
+      return NextResponse.json(data, { status: res.status })
+    }
+
+    // 9. Auth phone: /api/viber/auth/phone
+    if (route === "auth/phone" || route === "viber/auth/phone") {
+      const bodyText = await request.text()
+      const authRes = await fetch(`${origin}/api/auth/phone`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: bodyText || undefined,
+      })
+      const data = await authRes.json()
+      return NextResponse.json(data, { status: authRes.status })
+    }
+
+    // 10. Auth code: /api/viber/auth/code
+    if (route === "auth/code" || route === "viber/auth/code") {
+      const bodyText = await request.text()
+      const authRes = await fetch(`${origin}/api/auth/code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: bodyText || undefined,
+      })
+      const data = await authRes.json()
+      return NextResponse.json(data, { status: authRes.status })
+    }
+
+    // 11. QR auth start / cancel: /api/viber/auth/qr/start, /api/viber/auth/qr/cancel
+    if (
+      route === "auth/qr/start" ||
+      route === "viber/auth/qr/start" ||
+      route === "auth/qr/cancel" ||
+      route === "viber/auth/qr/cancel"
+    ) {
+      const action = route.endsWith("cancel") ? "cancel" : "start"
+      const qrBody = await request.text()
+      const qrRes = await fetch(`${origin}/api/auth/qr/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: qrBody || undefined,
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await qrRes.json()
+      return NextResponse.json(data, { status: qrRes.status })
+    }
+
+    // Fallback POST proxy
+    const bodyText = await request.text()
+    const fallbackRes = await fetch(`${origin}/api/${route}${search}`, {
+      method: "POST",
+      headers: { "Content-Type": request.headers.get("content-type") || "application/json" },
+      body: bodyText || undefined,
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    })
+
+    const contentType = fallbackRes.headers.get("content-type") || ""
+    if (contentType.includes("application/json")) {
+      const data = await fallbackRes.json()
+      return NextResponse.json(data, { status: fallbackRes.status })
+    }
+    return new Response(fallbackRes.body, {
+      status: fallbackRes.status,
+      headers: { "Content-Type": contentType },
+    })
   } catch (error) {
-    return failure(error, request)
+    return upstreamFailure(error)
   }
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
-  const match = matchProxyRoute("PATCH", context.params.path ?? [])
-  if (!match || !match.upstreamPath) return jsonError("Маршрут не поддерживается", 404)
-
   try {
-    return await passthroughJson(
-      request,
-      `/api/${match.upstreamPath}`,
-      { method: "PATCH", rawBody: (await request.text()) || "{}" },
-      "Бэкенд не поддерживает рассылку"
-    )
+    return await forwardUpstream(request, context, "PATCH")
   } catch (error) {
-    return failure(error, request)
+    return upstreamFailure(error)
+  }
+}
+
+export async function PUT(request: NextRequest, context: RouteContext) {
+  try {
+    return await forwardUpstream(request, context, "PUT")
+  } catch (error) {
+    return upstreamFailure(error)
   }
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {
-  const match = matchProxyRoute("DELETE", context.params.path ?? [])
-  if (!match || !match.upstreamPath) return jsonError("Маршрут не поддерживается", 404)
-
   try {
-    return await passthroughJson(
-      request,
-      `/api/${match.upstreamPath}`,
-      { method: "DELETE" },
-      "Бэкенд не поддерживает рассылку"
-    )
+    return await forwardUpstream(request, context, "DELETE")
   } catch (error) {
-    return failure(error, request)
+    return upstreamFailure(error)
   }
 }

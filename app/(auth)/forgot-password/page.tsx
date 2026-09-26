@@ -9,6 +9,8 @@ import { toast } from "sonner"
 import { z } from "zod"
 
 import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
+import { isSupabaseConfigured } from "@/lib/supabase/config"
 import { AuthHeading } from "@/components/auth/auth-heading"
 import {
   authEnter,
@@ -27,9 +29,6 @@ import {
 } from "@/components/ui/form"
 import { IconInput } from "@/components/ui/icon-input"
 
-import { useAuth } from "@/lib/supabase/auth-context"
-import { Loader2Icon } from "lucide-react"
-
 const forgotSchema = z.object({
   email: z.string().min(1, "Укажите email").email("Введите корректный email"),
 })
@@ -37,13 +36,8 @@ const forgotSchema = z.object({
 type ForgotValues = z.infer<typeof forgotSchema>
 
 export default function ForgotPasswordPage() {
-  const { resetPassword } = useAuth()
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [sentTo, setSentTo] = React.useState<string | null>(null)
   const successHeadingRef = React.useRef<HTMLHeadingElement>(null)
-  const emailInputRef = React.useRef<HTMLInputElement | null>(null)
-  /* Возврат к форме: её нужно очистить и вернуть фокус в поле email. */
-  const refocusEmail = React.useRef(false)
 
   /*
    * Каскад — часть загрузки страницы. По «Отправить на другой адрес» форма
@@ -66,35 +60,41 @@ export default function ForgotPasswordPage() {
     if (sentTo) {
       entered.current = true
       successHeadingRef.current?.focus()
-      return
-    }
-
-    if (refocusEmail.current) {
-      refocusEmail.current = false
-      emailInputRef.current?.focus()
     }
   }, [sentTo])
 
   const onSubmit = async (values: ForgotValues) => {
-    setIsSubmitting(true)
+    const isConfigured = isSupabaseConfigured()
+
+    if (!isConfigured) {
+      setSentTo(values.email)
+      toast.success("Ссылка отправлена (демо-режим)", {
+        description: "Supabase не настроен в .env.local.",
+      })
+      return
+    }
+
     try {
-      const { error } = await resetPassword(values.email)
+      const supabase = createClient()
+      const { error } = await supabase.auth.resetPasswordForEmail(values.email, {
+        redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
+      })
+
       if (error) {
-        toast.error("Ошибка при отправке ссылки", {
-          description: error.message || "Не удалось отправить письмо для сброса",
+        toast.error("Ошибка отправки", {
+          description: error.message,
         })
         return
       }
+
       setSentTo(values.email)
-      toast.success("Ссылка отправлена", {
-        description: "Проверьте почту для перехода к сбросу пароля.",
+      toast.success("Ссылка для сброса пароля отправлена", {
+        description: `Проверьте почту ${values.email}.`,
       })
-    } catch (err: unknown) {
-      toast.error("Не удалось отправить ссылку", {
-        description: err instanceof Error ? err.message : "Неизвестная ошибка",
+    } catch (err) {
+      toast.error("Ошибка соединения", {
+        description: err instanceof Error ? err.message : String(err),
       })
-    } finally {
-      setIsSubmitting(false)
     }
   }
 
@@ -131,11 +131,7 @@ export default function ForgotPasswordPage() {
             type="button"
             variant="ghost"
             className={cn("h-11 w-full text-[0.95rem]", authPress)}
-            onClick={() => {
-              form.reset()
-              refocusEmail.current = true
-              setSentTo(null)
-            }}
+            onClick={() => setSentTo(null)}
           >
             Отправить на другой адрес
           </Button>
@@ -172,14 +168,10 @@ export default function ForgotPasswordPage() {
                     autoComplete="email"
                     placeholder="Email"
                     {...field}
-                    ref={(node) => {
-                      field.ref(node)
-                      emailInputRef.current = node
-                    }}
                   />
                 </FormControl>
                 <FormDescription>
-                  На указанный адрес придет письмо со ссылкой для восстановления.
+                  Демо-режим: письмо реально не отправляется.
                 </FormDescription>
                 <FormMessage className={authFormMessage} />
               </FormItem>
@@ -188,21 +180,13 @@ export default function ForgotPasswordPage() {
 
           <Button
             type="submit"
-            disabled={isSubmitting}
             className={cn(
               "h-11 w-full text-[0.95rem]",
               authPress,
               enter(authEnter.submit)
             )}
           >
-            {isSubmitting ? (
-              <>
-                <Loader2Icon className="mr-2 size-4 animate-spin" />
-                Отправка...
-              </>
-            ) : (
-              "Отправить ссылку"
-            )}
+            Отправить ссылку
           </Button>
         </form>
       </Form>

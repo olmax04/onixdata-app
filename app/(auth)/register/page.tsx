@@ -2,12 +2,14 @@
 
 import { useRouter } from "next/navigation"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { MailIcon, UserIcon } from "lucide-react"
+import { MailIcon, UserIcon, Loader2Icon } from "lucide-react"
 import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
 import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
+import { isSupabaseConfigured } from "@/lib/supabase/config"
 import { AuthAltAction } from "@/components/auth/auth-alt-action"
 import { AuthDivider } from "@/components/auth/auth-divider"
 import { AuthHeading } from "@/components/auth/auth-heading"
@@ -29,10 +31,6 @@ import {
 } from "@/components/ui/form"
 import { IconInput, PasswordInput } from "@/components/ui/icon-input"
 
-import * as React from "react"
-import { useAuth } from "@/lib/supabase/auth-context"
-import { Loader2Icon } from "lucide-react"
-
 const registerSchema = z
   .object({
     name: z.string().min(2, "Укажите имя (минимум 2 символа)"),
@@ -52,8 +50,6 @@ type RegisterValues = z.infer<typeof registerSchema>
 
 export default function RegisterPage() {
   const router = useRouter()
-  const { signUp } = useAuth()
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
   const form = useForm<RegisterValues>({
     resolver: zodResolver(registerSchema),
@@ -67,34 +63,53 @@ export default function RegisterPage() {
   })
 
   const onSubmit = async (values: RegisterValues) => {
-    setIsSubmitting(true)
+    const isConfigured = isSupabaseConfigured()
+
+    if (!isConfigured) {
+      toast.success("Аккаунт создан (демо-режим)", {
+        description: `${values.email}. Supabase не настроен в .env.local.`,
+      })
+      router.push("/dashboard")
+      return
+    }
+
     try {
-      const { data, error } = await signUp(values.email, values.password, values.name)
+      const supabase = createClient()
+      const { data, error } = await supabase.auth.signUp({
+        email: values.email,
+        password: values.password,
+        options: {
+          data: {
+            name: values.name,
+            full_name: values.name,
+          },
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
+        },
+      })
+
       if (error) {
-        toast.error("Ошибка при регистрации", {
-          description: error.message || "Не удалось создать аккаунт",
+        toast.error("Ошибка регистрации", {
+          description: error.message,
         })
         return
       }
 
-      const res = data as { session?: unknown; user?: { identities?: unknown[] } } | null
-      if (res?.user && (!res.session || (Array.isArray(res.user.identities) && res.user.identities.length === 0))) {
+      if (data.session) {
         toast.success("Регистрация успешна", {
-          description: "Проверьте почту для подтверждения аккаунта.",
-        })
-        router.push("/login")
-      } else {
-        toast.success("Аккаунт создан", {
-          description: `Добро пожаловать, ${values.name}! Открываем дашборд.`,
+          description: `Добро пожаловать в OnixData, ${values.name}!`,
         })
         router.push("/dashboard")
+        router.refresh()
+      } else {
+        toast.success("Аккаунт создан", {
+          description: "На ваш email отправлено письмо с подтверждением. Пожалуйста, проверьте почту.",
+        })
+        router.push("/login")
       }
-    } catch (err: unknown) {
-      toast.error("Не удалось создать аккаунт", {
-        description: err instanceof Error ? err.message : "Неизвестная ошибка",
+    } catch (err) {
+      toast.error("Ошибка регистрации", {
+        description: err instanceof Error ? err.message : String(err),
       })
-    } finally {
-      setIsSubmitting(false)
     }
   }
 
@@ -109,7 +124,7 @@ export default function RegisterPage() {
         className={authEnter.title}
         descriptionClassName={authEnter.description}
         title="Создать аккаунт."
-        description="Подключите группы Viber и запустите первый сбор за пару минут."
+        description="Подключите источники и соберите первый датасет за пару минут."
       />
 
       <Form {...form}>
@@ -216,21 +231,17 @@ export default function RegisterPage() {
 
           <Button
             type="submit"
-            disabled={isSubmitting}
+            disabled={form.formState.isSubmitting}
             className={cn(
               "h-11 w-full text-[0.95rem]",
               authPress,
               authEnter.submit
             )}
           >
-            {isSubmitting ? (
-              <>
-                <Loader2Icon className="mr-2 size-4 animate-spin" />
-                Создание аккаунта...
-              </>
-            ) : (
-              "Создать аккаунт"
-            )}
+            {form.formState.isSubmitting ? (
+              <Loader2Icon className="size-4 animate-spin mr-2" />
+            ) : null}
+            Создать аккаунт
           </Button>
         </form>
       </Form>

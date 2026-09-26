@@ -39,16 +39,14 @@ export function BrandLogo({
           opacity=".5"
         />
       </svg>
-      {markOnly ? (
-        /* Без вордмарка метка немая — подпись нужна только здесь. */
-        <span className="sr-only">OnixData</span>
-      ) : (
+      {!markOnly && (
         <span className="text-[1.05rem] leading-none">
           <b className="font-bold">Onix</b>
           <span className="font-normal">Data</span>
           <span className="text-primary">.</span>
         </span>
       )}
+      <span className="sr-only">OnixData</span>
     </span>
   )
 }

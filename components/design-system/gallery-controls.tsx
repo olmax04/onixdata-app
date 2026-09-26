@@ -5,7 +5,6 @@ import { MailIcon, PlusIcon, SearchIcon } from "lucide-react"
 
 import { authPress } from "@/components/auth/auth-motion"
 import { DsBlock, DsCode } from "@/components/design-system/section"
-import { formatNumber } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -89,7 +88,7 @@ export function GalleryControls() {
           <Badge variant="secondary" className="gap-1.5 py-1 font-normal">
             доставка
             <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-              {formatNumber(1842)}
+              1 842
             </span>
           </Badge>
           <Badge className="h-4 min-w-4 justify-center rounded-full px-1 text-[10px] leading-none">
@@ -105,7 +104,7 @@ export function GalleryControls() {
         <div className="grid gap-4 rounded-xl border bg-card p-4 md:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="ds-input">Обычное поле</Label>
-            <Input id="ds-input" placeholder="invite.viber.com/…" />
+            <Input id="ds-input" placeholder="@my_public_channel" />
           </div>
 
           <div className="space-y-1.5">

@@ -57,7 +57,6 @@ export function MentionsChart() {
           stroke="var(--color-mentions)"
           strokeWidth={2}
           fill="url(#fillMentions)"
-          isAnimationActive={false}
         />
       </AreaChart>
     </ChartContainer>

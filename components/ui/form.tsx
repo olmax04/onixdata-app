@@ -52,13 +52,7 @@ const useFormField = () => {
     throw new Error("useFormField should be used within <FormField>")
   }
 
-  const {
-    id,
-    hasDescription,
-    setHasDescription,
-    hasMessage,
-    setHasMessage,
-  } = itemContext
+  const { id } = itemContext
 
   return {
     id,
@@ -66,53 +60,26 @@ const useFormField = () => {
     formItemId: `${id}-form-item`,
     formDescriptionId: `${id}-form-item-description`,
     formMessageId: `${id}-form-item-message`,
-    hasDescription,
-    setHasDescription,
-    hasMessage,
-    setHasMessage,
     ...fieldState,
   }
 }
 
 type FormItemContextValue = {
   id: string
-  /** Отрисован ли FormDescription — от этого зависит aria-describedby. */
-  hasDescription: boolean
-  setHasDescription: (value: boolean) => void
-  /** Отрисован ли FormMessage — ошибка сама по себе узла не создаёт. */
-  hasMessage: boolean
-  setHasMessage: (value: boolean) => void
 }
 
-const FormItemContext = React.createContext<FormItemContextValue>({
-  id: "",
-  hasDescription: false,
-  setHasDescription: () => {},
-  hasMessage: false,
-  setHasMessage: () => {},
-})
+const FormItemContext = React.createContext<FormItemContextValue>(
+  {} as FormItemContextValue
+)
 
 const FormItem = React.forwardRef<
   HTMLDivElement,
   React.HTMLAttributes<HTMLDivElement>
 >(({ className, ...props }, ref) => {
   const id = React.useId()
-  const [hasDescription, setHasDescription] = React.useState(false)
-  const [hasMessage, setHasMessage] = React.useState(false)
-
-  const context = React.useMemo(
-    () => ({
-      id,
-      hasDescription,
-      setHasDescription,
-      hasMessage,
-      setHasMessage,
-    }),
-    [id, hasDescription, hasMessage]
-  )
 
   return (
-    <FormItemContext.Provider value={context}>
+    <FormItemContext.Provider value={{ id }}>
       <div ref={ref} className={cn("space-y-2", className)} {...props} />
     </FormItemContext.Provider>
   )
@@ -140,29 +107,17 @@ const FormControl = React.forwardRef<
   React.ElementRef<typeof Slot>,
   React.ComponentPropsWithoutRef<typeof Slot>
 >(({ ...props }, ref) => {
-  const {
-    error,
-    formItemId,
-    formDescriptionId,
-    formMessageId,
-    hasDescription,
-    hasMessage,
-  } = useFormField()
-
-  /* Ссылаемся только на существующие узлы: битый id ломает скринридер. */
-  const describedBy =
-    [
-      hasDescription ? formDescriptionId : null,
-      hasMessage && error ? formMessageId : null,
-    ]
-      .filter(Boolean)
-      .join(" ") || undefined
+  const { error, formItemId, formDescriptionId, formMessageId } = useFormField()
 
   return (
     <Slot
       ref={ref}
       id={formItemId}
-      aria-describedby={describedBy}
+      aria-describedby={
+        !error
+          ? `${formDescriptionId}`
+          : `${formDescriptionId} ${formMessageId}`
+      }
       aria-invalid={!!error}
       {...props}
     />
@@ -174,13 +129,7 @@ const FormDescription = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
 >(({ className, ...props }, ref) => {
-  const { formDescriptionId, setHasDescription } = useFormField()
-
-  /* Регистрируемся в FormItem, чтобы FormControl знал про наш id. */
-  React.useEffect(() => {
-    setHasDescription(true)
-    return () => setHasDescription(false)
-  }, [setHasDescription])
+  const { formDescriptionId } = useFormField()
 
   return (
     <p
@@ -197,20 +146,10 @@ const FormMessage = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
 >(({ className, children, ...props }, ref) => {
-  const { error, formMessageId, setHasMessage } = useFormField()
+  const { error, formMessageId } = useFormField()
   const body = error ? String(error?.message ?? "") : children
-  const rendered = Boolean(body)
 
-  /* Регистрируемся в FormItem, чтобы FormControl знал про наш id. */
-  React.useEffect(() => {
-    if (!rendered) {
-      return
-    }
-    setHasMessage(true)
-    return () => setHasMessage(false)
-  }, [rendered, setHasMessage])
-
-  if (!rendered) {
+  if (!body) {
     return null
   }
 

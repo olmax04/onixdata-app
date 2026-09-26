@@ -67,7 +67,7 @@ export function ColorSwatches() {
 
       <DsBlock
         title="Тональность сообщений"
-        hint="В системе нет зелёного success и жёлтого warning: позитив выражается кораллом, негатив — нейтрально, ошибка — destructive. Исключение — панели Viber: состояния бэкенда там показаны статусными цветами Tailwind (emerald/amber/blue/indigo)."
+        hint="В системе нет зелёного success и жёлтого warning: позитив выражается кораллом, негатив — нейтрально, ошибка — destructive."
       >
         <div className="grid gap-3 sm:grid-cols-3">
           {sentimentSemantics.map((row) => (
@@ -101,7 +101,7 @@ export function ColorSwatches() {
           </span>
           <span className="flex items-center gap-2 text-muted-foreground">
             <span className="inline-block size-2 animate-pulse rounded-full bg-primary" />
-            в эфире (animate-pulse) — панели Viber
+            в эфире (animate-pulse)
           </span>
         </div>
       </DsBlock>

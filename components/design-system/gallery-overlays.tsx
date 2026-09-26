@@ -8,7 +8,6 @@ import { NewParseDialog } from "@/components/dashboard/new-parse-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogFooter,
@@ -51,20 +50,16 @@ export function GalleryOverlays() {
                 </DialogDescription>
               </DialogHeader>
               <p className="text-sm text-muted-foreground">
-                Собранные сообщения останутся в базе, новые перестанут
+                Собранные сообщения останутся в датасетах, новые перестанут
                 поступать.
               </p>
               <DialogFooter className="gap-2 sm:gap-2">
-                <DialogClose asChild>
-                  <Button type="button" variant="ghost">
-                    Отмена
-                  </Button>
-                </DialogClose>
-                <DialogClose asChild>
-                  <Button type="button" variant="destructive">
-                    Удалить
-                  </Button>
-                </DialogClose>
+                <Button type="button" variant="ghost">
+                  Отмена
+                </Button>
+                <Button type="button" variant="destructive">
+                  Удалить
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -77,7 +72,7 @@ export function GalleryOverlays() {
 
       <DsBlock
         title="DropdownMenu"
-        hint="Действия строки таблицы. Деструктивный пункт помечается text-destructive focus:bg-destructive/15 focus:text-destructive: обычный focus:bg-accent даёт под красным текстом контраст 4,16:1 — ниже нормы."
+        hint="Действия строки таблицы. Деструктивный пункт помечается text-destructive focus:text-destructive — цвет сохраняется и при наведении."
       >
         <div className="rounded-xl border bg-card p-4">
           <DropdownMenu>
@@ -85,7 +80,7 @@ export function GalleryOverlays() {
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label="Действия для источника Доставка и логистика · Минск"
+                aria-label="Действия для источника Крипто Дайджест"
               >
                 <MoreHorizontalIcon />
               </Button>
@@ -102,7 +97,7 @@ export function GalleryOverlays() {
                 Экспорт
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive focus:bg-destructive/15 focus:text-destructive">
+              <DropdownMenuItem className="text-destructive focus:text-destructive">
                 <Trash2Icon />
                 Удалить
               </DropdownMenuItem>
@@ -160,7 +155,7 @@ export function GalleryOverlays() {
             onClick={() =>
               toast.success("Задача парсинга запущена", {
                 description:
-                  "Viber: invite.viber.com/demo. Демо-режим, сбор не выполняется.",
+                  "Telegram: @my_public_channel. Демо-режим, сбор не выполняется.",
               })
             }
           >

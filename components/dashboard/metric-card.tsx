@@ -4,7 +4,6 @@ import { TrendingDownIcon, TrendingUpIcon } from "lucide-react"
 import { Area, AreaChart, ResponsiveContainer } from "recharts"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { formatDelta, formatNumber } from "@/lib/format"
 import type { Metric } from "@/lib/mock-data"
 import { cn } from "@/lib/utils"
 
@@ -24,7 +23,7 @@ export function MetricCard({ metric }: { metric: Metric }) {
         <div className="flex items-end justify-between gap-3">
           <div className="space-y-1">
             <p className="text-2xl font-semibold tabular-nums tracking-tight">
-              {formatNumber(metric.value)}
+              {metric.value}
             </p>
             <p
               className={cn(
@@ -33,7 +32,8 @@ export function MetricCard({ metric }: { metric: Metric }) {
               )}
             >
               <TrendIcon className="size-3.5" aria-hidden="true" />
-              {formatDelta(metric.delta)}
+              {positive ? "+" : ""}
+              {metric.delta.toLocaleString("ru-RU")}%
             </p>
           </div>
 

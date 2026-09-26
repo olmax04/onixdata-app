@@ -4,8 +4,8 @@ import * as React from "react"
 import {
   Loader2Icon,
   PlayIcon,
-  SearchIcon,
   SendIcon,
+  SettingsIcon,
   SquareIcon,
   Trash2Icon,
 } from "lucide-react"
@@ -20,18 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
 import {
   Table,
   TableBody,
@@ -40,124 +29,38 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Textarea } from "@/components/ui/textarea"
+import { BroadcastCampaignDialog } from "@/components/dashboard/broadcast-campaign-dialog"
+import {
+  BroadcastCampaignForm,
+  type BroadcastGroupRow,
+} from "@/components/dashboard/broadcast-campaign-form"
+import {
+  emptyCampaignForm,
+  formatBroadcastTime,
+  formStateToPayload,
+  hoursLabel,
+  isNowWithinHours,
+  ROTATION_LABELS,
+  STATUS_LABELS,
+  validateCampaignForm,
+  type CampaignFormState,
+} from "@/lib/broadcast-form"
+import { viberJson } from "@/lib/viber-parser/client"
 import type {
   BroadcastCampaign,
-  BroadcastCampaignStatus,
-  BroadcastRotation,
   BroadcastSendHistory,
   BroadcastStatusDto,
   ViberGroup,
   ViberGroupsResponse,
 } from "@/lib/viber-parser/types"
-import { usePollLoop } from "@/lib/viber-parser/use-poll-loop"
 
 const STATUS_POLL_MS = 5000
-/** Опрос без активной кампании: реже, но не «никогда» — кампанию могли запустить не отсюда. */
-const IDLE_POLL_MS = 15_000
 
-const ROTATION_LABELS: Record<BroadcastRotation, string> = {
-  "round-robin": "По кругу",
-  random: "Случайно",
-  "shuffle-cycle": "Перемешанный цикл",
+export interface ViberBroadcastPanelProps {
+  deviceId?: string
 }
 
-const STATUS_LABELS: Record<BroadcastCampaignStatus, string> = {
-  idle: "Черновик",
-  running: "Идёт рассылка",
-  stopped: "Остановлена",
-  error: "Ошибка",
-}
-
-class BroadcastApiError extends Error {
-  readonly status: number
-
-  constructor(message: string, status: number) {
-    super(message)
-    this.name = "BroadcastApiError"
-    this.status = status
-  }
-}
-
-function isUnsupportedError(reason: unknown): boolean {
-  return reason instanceof BroadcastApiError && reason.status === 404
-}
-
-async function viberJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/viber/${path}`, { cache: "no-store", ...init })
-  if (res.status === 204) return undefined as T
-  const text = await res.text()
-  let payload: { error?: string; message?: string } | T | null = null
-  if (text) {
-    try {
-      payload = JSON.parse(text) as T
-    } catch {
-      payload = null
-    }
-  }
-  if (!res.ok) {
-    const err = payload as { error?: string; message?: string } | null
-    throw new BroadcastApiError(
-      err?.error || err?.message || `Ошибка запроса (${res.status})`,
-      res.status
-    )
-  }
-  return payload as T
-}
-
-function formatTime(iso: string): string {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return "—"
-  return date.toLocaleString("ru-RU", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  })
-}
-
-function parseMessages(raw: string): string[] {
-  return raw
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line !== "")
-}
-
-function variantCountLabel(count: number): string {
-  const mod10 = count % 10
-  const mod100 = count % 100
-  if (mod10 === 1 && mod100 !== 11) return `${count} вариант`
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} варианта`
-  return `${count} вариантов`
-}
-
-function minutesToMs(minutes: number): number {
-  return Math.round(minutes * 60_000)
-}
-
-function toClock(value: string): string {
-  return value.trim().slice(0, 5)
-}
-
-function hoursLabel(from: string | null | undefined, to: string | null | undefined): string {
-  if (!from || !to) return "круглосуточно"
-  return `${from}–${to}`
-}
-
-function isNowWithinHours(from: string | null | undefined, to: string | null | undefined): boolean {
-  if (!from || !to || from === to) return true
-  const parse = (value: string): number => {
-    const [hours, minutes] = value.split(":").map(Number)
-    return (hours ?? 0) * 60 + (minutes ?? 0)
-  }
-  const start = parse(from)
-  const end = parse(to)
-  const now = new Date()
-  const current = now.getHours() * 60 + now.getMinutes()
-  return start < end ? current >= start && current < end : current >= start || current < end
-}
-
-export function ViberBroadcastPanel() {
+export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {}) {
   const [groups, setGroups] = React.useState<ViberGroup[]>([])
   const [campaigns, setCampaigns] = React.useState<BroadcastCampaign[]>([])
   const [status, setStatus] = React.useState<BroadcastStatusDto | null>(null)
@@ -166,23 +69,13 @@ export function ViberBroadcastPanel() {
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState(false)
   const [busyId, setBusyId] = React.useState<string | null>(null)
-  const [notSupported, setNotSupported] = React.useState(false)
+  const [editingId, setEditingId] = React.useState<string | null>(null)
 
-  const [name, setName] = React.useState("")
-  const [selectedIds, setSelectedIds] = React.useState<Set<number>>(new Set())
-  const [groupQuery, setGroupQuery] = React.useState("")
-  const [messagesText, setMessagesText] = React.useState("")
-  const [intervalMinutes, setIntervalMinutes] = React.useState("2")
-  const [cooldownMinutes, setCooldownMinutes] = React.useState("30")
-  const [activeFrom, setActiveFrom] = React.useState("09:00")
-  const [activeTo, setActiveTo] = React.useState("21:00")
-  const [rotation, setRotation] = React.useState<BroadcastRotation>("shuffle-cycle")
-  const [loop, setLoop] = React.useState(true)
+  const [form, setForm] = React.useState<CampaignFormState>(() => emptyCampaignForm())
 
   const running = status?.campaign ?? campaigns.find((item) => item.status === "running") ?? null
-  const runningId = running?.id ?? null
 
-  const groupRows = React.useMemo(
+  const groupRows = React.useMemo<BroadcastGroupRow[]>(
     () =>
       groups
         .filter((group) => group.conversationType !== 0)
@@ -195,14 +88,21 @@ export function ViberBroadcastPanel() {
     [groups]
   )
 
-  const visibleGroups = React.useMemo(() => {
-    const query = groupQuery.trim().toLowerCase()
-    if (!query) return groupRows
-    return groupRows.filter(
-      (row) =>
-        row.name.toLowerCase().includes(query) || String(row.conversationId).includes(query)
-    )
-  }, [groupRows, groupQuery])
+  const knownNames = React.useMemo(
+    () => new Map(groupRows.map((row) => [row.conversationId, row.name] as const)),
+    [groupRows]
+  )
+
+  const editing = React.useMemo(
+    () => campaigns.find((item) => item.id === editingId) ?? null,
+    [campaigns, editingId]
+  )
+
+  // Кампанию могли удалить из другой вкладки — закрываем диалог явно, иначе он
+  // сам всплывёт, когда запись вернётся в следующем ответе поллинга.
+  React.useEffect(() => {
+    if (editingId !== null && editing === null) setEditingId(null)
+  }, [editingId, editing])
 
   const refresh = React.useCallback(async () => {
     const [campaignList, broadcastStatus, last, recent] = await Promise.allSettled([
@@ -211,15 +111,6 @@ export function ViberBroadcastPanel() {
       viberJson<BroadcastSendHistory[]>("broadcast/history/last"),
       viberJson<BroadcastSendHistory[]>("broadcast/history?limit=50"),
     ])
-
-    // Старая сборка бэкенда без модуля broadcast отвечает 404 — показываем это один раз блоком.
-    const unsupported =
-      campaignList.status === "rejected" &&
-      broadcastStatus.status === "rejected" &&
-      isUnsupportedError(campaignList.reason) &&
-      isUnsupportedError(broadcastStatus.reason)
-    setNotSupported(unsupported)
-
     if (campaignList.status === "fulfilled") {
       setCampaigns(Array.isArray(campaignList.value) ? campaignList.value : [])
     }
@@ -233,112 +124,63 @@ export function ViberBroadcastPanel() {
     return {
       campaignsOk: campaignList.status === "fulfilled",
       statusOk: broadcastStatus.status === "fulfilled",
-      unsupported,
     }
   }, [])
 
   const loadInitial = React.useCallback(async () => {
     setLoading(true)
     try {
+      // Рассылка идёт в чаты выбранного инстанса, поэтому целями могут быть
+      // только группы, открытые на его эмуляторе. Без инстанса список остаётся
+      // полным — вместе с записями из базы и архива.
+      const groupsPath = deviceId
+        ? `groups?deviceId=${encodeURIComponent(deviceId)}&onDevice=true`
+        : "groups"
       const [groupsRes, rest] = await Promise.all([
-        viberJson<ViberGroupsResponse>("groups").catch(() => null),
+        viberJson<ViberGroupsResponse>(groupsPath).catch(() => null),
         refresh(),
       ])
       if (groupsRes) setGroups(groupsRes.groups)
-      if (!rest.campaignsOk && !rest.statusOk && !rest.unsupported) {
+      if (!rest.campaignsOk && !rest.statusOk) {
         toast.error("Не удалось загрузить рассылку Viber")
       }
     } finally {
       setLoading(false)
     }
-  }, [refresh])
+  }, [deviceId, refresh])
 
   React.useEffect(() => {
     void loadInitial()
   }, [loadInitial])
 
-  // Отказ фонового опроса цикл ронять не должен: refresh сам разбирает частичные ошибки.
-  const pollBroadcast = React.useCallback(async () => {
-    try {
-      await refresh()
-    } catch {
-      // единичный сбой опроса ничего не меняет на экране, следующий тик его исправит
-    }
-  }, [refresh])
-
-  // Интервал по наличию активной кампании, а не по объекту: объект новый после каждого
-  // refresh. В покое опрашиваем реже, но опрашиваем: кампанию мог запустить другой клиент.
-  usePollLoop({
-    enabled: !notSupported,
-    intervalMs: runningId ? STATUS_POLL_MS : IDLE_POLL_MS,
-    onTick: pollBroadcast,
-  })
-
-  const toggleGroup = (conversationId: number, checked: boolean) => {
-    setSelectedIds((current) => {
-      const next = new Set(current)
-      if (checked) next.add(conversationId)
-      else next.delete(conversationId)
-      return next
-    })
-  }
+  React.useEffect(() => {
+    if (!running) return
+    const timer = window.setInterval(() => {
+      void refresh()
+    }, STATUS_POLL_MS)
+    return () => window.clearInterval(timer)
+  }, [running, refresh])
 
   const handleCreate = async () => {
-    const messages = parseMessages(messagesText)
-    const conversationIds = Array.from(selectedIds)
-    const intervalMs = minutesToMs(Number(intervalMinutes))
-    const minIntervalPerChatMs = minutesToMs(Number(cooldownMinutes))
-
-    if (conversationIds.length === 0) {
-      toast.error("Выберите хотя бы одну группу")
-      return
-    }
-    if (messages.length === 0) {
-      toast.error("Добавьте хотя бы один текст сообщения — каждый вариант с новой строки")
-      return
-    }
-    if (!Number.isFinite(intervalMs) || intervalMs < 5_000) {
-      toast.error("Пауза между отправками должна быть не меньше 1 минуты")
-      return
-    }
-    if (!Number.isFinite(minIntervalPerChatMs) || minIntervalPerChatMs < 5_000) {
-      toast.error("Пауза для одного чата должна быть не меньше 1 минуты")
-      return
-    }
-
-    const from = toClock(activeFrom)
-    const to = toClock(activeTo)
-    if (!from || !to) {
-      toast.error("Укажите рабочие часы с … по …")
+    const error = validateCampaignForm(form)
+    if (error) {
+      toast.error(error)
       return
     }
 
     setSaving(true)
     try {
-      const payload: Record<string, unknown> = {
-        conversationIds,
-        messages,
-        intervalMs,
-        minIntervalPerChatMs,
-        rotation,
-        loop,
-        activeFrom: from,
-        activeTo: to,
-      }
-      const trimmedName = name.trim()
-      if (trimmedName) payload.name = trimmedName
-
       const created = await viberJson<BroadcastCampaign>("broadcast/campaigns", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(formStateToPayload(form, knownNames)),
       })
       toast.success(`Кампания «${created.name}» сохранена`)
-      setName("")
+      setForm((current) => ({ ...current, name: "" }))
       await refresh()
-    } catch (error) {
+    } catch (err) {
       toast.error("Не удалось сохранить кампанию", {
-        description: error instanceof Error ? error.message : undefined,
+        description: err instanceof Error ? err.message : undefined,
       })
     } finally {
       setSaving(false)
@@ -390,26 +232,6 @@ export function ViberBroadcastPanel() {
     }
   }
 
-  if (notSupported) {
-    return (
-      <Card className="border-amber-500/30 bg-amber-500/5">
-        <CardHeader>
-          <CardTitle className="text-base">Бэкенд не поддерживает рассылку</CardTitle>
-          <CardDescription className="text-xs">
-            Подключённая сборка Viber Parser отвечает 404 на <code>/api/broadcast/*</code> — в ней
-            нет модуля рассылки. Обновите бэкенд до версии с модулем broadcast и перезагрузите
-            страницу.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="outline" size="sm" className="text-xs" onClick={() => void loadInitial()}>
-            Проверить ещё раз
-          </Button>
-        </CardContent>
-      </Card>
-    )
-  }
-
   return (
     <div className="space-y-4">
       <div className="grid gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
@@ -422,164 +244,13 @@ export function ViberBroadcastPanel() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="space-y-1.5">
-              <Label htmlFor="broadcast-name">Название</Label>
-              <Input
-                id="broadcast-name"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Вечерняя рассылка"
-                className="h-9 text-sm"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="broadcast-groups-search">Группы</Label>
-              <div className="relative">
-                <SearchIcon className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  id="broadcast-groups-search"
-                  value={groupQuery}
-                  onChange={(event) => setGroupQuery(event.target.value)}
-                  placeholder="Поиск группы…"
-                  className="h-9 pl-8 text-xs"
-                />
-              </div>
-              <ScrollArea className="h-52 rounded-lg border">
-                {loading && groupRows.length === 0 ? (
-                  <p className="p-4 text-xs text-muted-foreground">Загрузка групп…</p>
-                ) : visibleGroups.length === 0 ? (
-                  <p className="p-4 text-xs text-muted-foreground">Группы не найдены.</p>
-                ) : (
-                  <ul className="divide-y">
-                    {visibleGroups.map((row) => {
-                      const checked = selectedIds.has(row.conversationId)
-                      return (
-                        <li key={row.conversationId}>
-                          <label className="flex min-h-11 cursor-pointer items-center gap-3 px-3 py-1">
-                            <Checkbox
-                              checked={checked}
-                              onCheckedChange={(value) =>
-                                toggleGroup(row.conversationId, value === true)
-                              }
-                              aria-label={row.name}
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-sm font-medium">{row.name}</span>
-                              <span className="text-[11px] text-muted-foreground">
-                                ID {row.conversationId}
-                                {typeof row.memberCount === "number"
-                                  ? ` · ${row.memberCount.toLocaleString("ru-RU")} уч.`
-                                  : ""}
-                              </span>
-                            </span>
-                          </label>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </ScrollArea>
-              <p className="text-[11px] text-muted-foreground">
-                Выбрано: {selectedIds.size} из {groupRows.length}
-              </p>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="broadcast-messages">Тексты сообщений</Label>
-              <Textarea
-                id="broadcast-messages"
-                value={messagesText}
-                onChange={(event) => setMessagesText(event.target.value)}
-                placeholder={"Добрый день! Актуальное расписание на сегодня.\nНапоминаем о правилах группы."}
-                className="min-h-28 text-sm"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                {variantCountLabel(parseMessages(messagesText).length)}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="broadcast-interval">Пауза, мин</Label>
-                <Input
-                  id="broadcast-interval"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={intervalMinutes}
-                  onChange={(event) => setIntervalMinutes(event.target.value)}
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="broadcast-cooldown">На чат, мин</Label>
-                <Input
-                  id="broadcast-cooldown"
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={cooldownMinutes}
-                  onChange={(event) => setCooldownMinutes(event.target.value)}
-                  className="h-9 text-sm"
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="broadcast-from">Рабочие часы с</Label>
-                <Input
-                  id="broadcast-from"
-                  type="time"
-                  value={activeFrom}
-                  onChange={(event) => setActiveFrom(event.target.value)}
-                  className="h-9 text-sm"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="broadcast-to">по</Label>
-                <Input
-                  id="broadcast-to"
-                  type="time"
-                  value={activeTo}
-                  onChange={(event) => setActiveTo(event.target.value)}
-                  className="h-9 text-sm"
-                />
-              </div>
-            </div>
-            <p className="text-[11px] text-muted-foreground">
-              По местному времени компьютера. Вне этого окна рассылка ждёт и не пишет в чаты.
-            </p>
-
-            <div className="space-y-1.5">
-              <Label>Порядок текстов</Label>
-              <Select
-                value={rotation}
-                onValueChange={(value) => setRotation(value as BroadcastRotation)}
-              >
-                <SelectTrigger className="h-9 text-sm" aria-label="Порядок текстов">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Object.entries(ROTATION_LABELS).map(([value, label]) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="flex min-h-11 items-center justify-between gap-3 rounded-lg border px-3">
-              <div>
-                <p className="text-sm font-medium">Повторять по кругу</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Выкл — по одному сообщению в каждую группу и стоп
-                </p>
-              </div>
-              <Switch checked={loop} onCheckedChange={setLoop} aria-label="Повторять по кругу" />
-            </div>
+            <BroadcastCampaignForm
+              idPrefix="broadcast"
+              value={form}
+              onChange={setForm}
+              groupRows={groupRows}
+              loadingGroups={loading}
+            />
 
             <Button className="w-full gap-1.5" disabled={saving} onClick={() => void handleCreate()}>
               {saving ? <Loader2Icon className="size-4 animate-spin" /> : <SendIcon className="size-4" />}
@@ -639,7 +310,7 @@ export function ViberBroadcastPanel() {
                 </div>
                 <div className="rounded-lg border p-3.5">
                   <span className="block text-xs font-medium text-muted-foreground">Статус</span>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
+                  <p className="mt-2 flex flex-wrap gap-1.5">
                     <Badge variant={running ? "default" : "secondary"} className="font-normal">
                       {running ? STATUS_LABELS[running.status] : "Ожидание"}
                     </Badge>
@@ -648,7 +319,7 @@ export function ViberBroadcastPanel() {
                         Пауза до {running.activeFrom}
                       </Badge>
                     ) : null}
-                  </div>
+                  </p>
                 </div>
               </div>
               {running?.lastError ? (
@@ -661,7 +332,7 @@ export function ViberBroadcastPanel() {
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Кампании</CardTitle>
               <CardDescription className="text-xs">
-                Одновременно может идти только одна рассылка — эмулятор занят отправкой.
+                Одновременно может идти только одна рассылка — устройство занято отправкой.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -740,6 +411,16 @@ export function ViberBroadcastPanel() {
                             variant="outline"
                             size="sm"
                             className="gap-1.5 text-xs"
+                            onClick={() => setEditingId(campaign.id)}
+                            aria-label={`Открыть ${campaign.name}`}
+                          >
+                            <SettingsIcon className="size-3.5" />
+                            {isRunning ? "Открыть" : "Изменить"}
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-1.5 text-xs"
                             disabled={busy || isRunning}
                             onClick={() => void handleDelete(campaign.id)}
                             aria-label={`Удалить ${campaign.name}`}
@@ -756,6 +437,19 @@ export function ViberBroadcastPanel() {
           </Card>
         </div>
       </div>
+
+      <BroadcastCampaignDialog
+        campaign={editing}
+        groupRows={groupRows}
+        loadingGroups={loading}
+        open={editingId !== null}
+        onOpenChange={(next) => {
+          if (!next) setEditingId(null)
+        }}
+        onSaved={async () => {
+          await refresh()
+        }}
+      />
 
       <div className="grid gap-4 xl:grid-cols-2">
         <Card>
@@ -795,7 +489,7 @@ export function ViberBroadcastPanel() {
                         <span className="line-clamp-3">{entry.text || entry.error || "—"}</span>
                       </TableCell>
                       <TableCell className="align-top text-xs text-muted-foreground">
-                        {formatTime(entry.sentAt)}
+                        {formatBroadcastTime(entry.sentAt)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -827,7 +521,7 @@ export function ViberBroadcastPanel() {
                     {history.map((entry) => (
                       <TableRow key={entry.id}>
                         <TableCell className="whitespace-nowrap align-top text-xs text-muted-foreground">
-                          {formatTime(entry.sentAt)}
+                          {formatBroadcastTime(entry.sentAt)}
                         </TableCell>
                         <TableCell className="align-top text-sm">
                           {entry.conversationName || `ID ${entry.conversationId}`}

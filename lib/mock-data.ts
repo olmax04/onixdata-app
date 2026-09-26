@@ -10,6 +10,8 @@ export type SourceStatus = "active" | "paused" | "error"
 
 export type Sentiment = "positive" | "neutral" | "negative"
 
+export type DatasetFormat = "CSV" | "JSON" | "API"
+
 export interface Source {
   id: string
   name: string
@@ -33,11 +35,20 @@ export interface StreamMessage {
   phoneSource?: "message_text" | "viber_profile" | "none" | null
 }
 
+export interface Dataset {
+  id: string
+  name: string
+  source: string
+  rows: number
+  format: DatasetFormat
+  createdAt: string
+  size: string
+}
+
 export interface Metric {
   id: string
   title: string
-  /** Сырое число: форматирование живёт в MetricCard (formatNumber). */
-  value: number
+  value: string
   delta: number
   hint: string
   spark: { i: number; v: number }[]
@@ -60,13 +71,7 @@ export const sentimentLabels: Record<Sentiment, string> = {
   negative: "Негатив",
 }
 
-/** Viber идёт первым: это единственная платформа с реальной интеграцией. */
-export const platforms: Platform[] = [
-  "Viber",
-  "Telegram",
-  "WhatsApp",
-  "Discord",
-]
+export const platforms: Platform[] = ["Telegram", "WhatsApp", "Discord"]
 
 export const frequencyOptions = [
   { value: "realtime", label: "Реальное время" },
@@ -77,10 +82,10 @@ export const frequencyOptions = [
 export const sources: Source[] = [
   {
     id: "src-01",
-    name: "Доставка и логистика · Минск",
-    handle: "invite.viber.com/dostavka-minsk",
-    platform: "Viber",
-    kind: "Публичная группа",
+    name: "Крипто Дайджест",
+    handle: "@crypto_digest_ru",
+    platform: "Telegram",
+    kind: "Публичный канал",
     messages: 128450,
     updatedAt: "2 мин назад",
     status: "active",
@@ -107,9 +112,9 @@ export const sources: Source[] = [
   },
   {
     id: "src-04",
-    name: "Барахолка Гомель",
-    handle: "invite.viber.com/baraholka-gomel",
-    platform: "Viber",
+    name: "Открытая рассылка ритейла",
+    handle: "wa.me/open-retail",
+    platform: "WhatsApp",
     kind: "Публичная группа",
     messages: 41870,
     updatedAt: "12 мин назад",
@@ -161,7 +166,7 @@ export const metrics: Metric[] = [
   {
     id: "mentions",
     title: "Упоминания за 24 ч",
-    value: 18402,
+    value: "18 402",
     delta: 12.4,
     hint: "вчера за тот же период — 16 370",
     spark: [
@@ -182,7 +187,7 @@ export const metrics: Metric[] = [
   {
     id: "sources",
     title: "Активные источники",
-    value: 42,
+    value: "42",
     delta: 4.8,
     hint: "8 в этом проекте, 34 в архиве",
     spark: [
@@ -203,7 +208,7 @@ export const metrics: Metric[] = [
   {
     id: "collected",
     title: "Сообщений собрано",
-    value: 1284903,
+    value: "1 284 903",
     delta: 8.1,
     hint: "за всё время наблюдения",
     spark: [
@@ -224,7 +229,7 @@ export const metrics: Metric[] = [
   {
     id: "speed",
     title: "Скорость сбора (сообщений/мин)",
-    value: 1640,
+    value: "1 640",
     delta: -3.2,
     hint: "два источника на паузе",
     spark: [
@@ -290,8 +295,8 @@ export const streamMessages: StreamMessage[] = [
   {
     id: "msg-01",
     time: "14:32:08",
-    source: "invite.viber.com/dostavka-minsk",
-    platform: "Viber",
+    source: "@crypto_digest_ru",
+    platform: "Telegram",
     author: "Марина К.",
     text: "Кто-нибудь сравнивал тарифы на доставку у двух крупных операторов за последний месяц?",
     sentiment: "neutral",
@@ -344,8 +349,8 @@ export const streamMessages: StreamMessage[] = [
   {
     id: "msg-07",
     time: "14:29:59",
-    source: "invite.viber.com/dostavka-minsk",
-    platform: "Viber",
+    source: "@crypto_digest_ru",
+    platform: "Telegram",
     author: "Илья Р.",
     text: "Подписка продлилась автоматически, уведомление пришло заранее — удобно.",
     sentiment: "positive",
@@ -380,8 +385,8 @@ export const streamMessages: StreamMessage[] = [
   {
     id: "msg-11",
     time: "14:28:15",
-    source: "invite.viber.com/baraholka-gomel",
-    platform: "Viber",
+    source: "wa.me/open-retail",
+    platform: "WhatsApp",
     author: "Тимур А.",
     text: "Скидка по промокоду применилась корректно, спасибо команде.",
     sentiment: "positive",
@@ -398,8 +403,8 @@ export const streamMessages: StreamMessage[] = [
   {
     id: "msg-13",
     time: "14:27:20",
-    source: "invite.viber.com/dostavka-minsk",
-    platform: "Viber",
+    source: "@crypto_digest_ru",
+    platform: "Telegram",
     author: "Вера С.",
     text: "Поддержка ответила за четыре минуты и решила вопрос сразу.",
     sentiment: "positive",
@@ -415,6 +420,146 @@ export const streamMessages: StreamMessage[] = [
   },
 ]
 
+/** Заготовки, из которых собирается «живой» поток на странице /dashboard/stream. */
+export const streamTemplates: Omit<StreamMessage, "id" | "time">[] = [
+  {
+    source: "@crypto_digest_ru",
+    platform: "Telegram",
+    author: "Артём Л.",
+    text: "Появился новый тариф для малых команд, лимиты выглядят адекватно.",
+    sentiment: "positive",
+  },
+  {
+    source: "discord.gg/devs-community",
+    platform: "Discord",
+    author: "sam_codes",
+    text: "Кто-нибудь тянет вебхуки через очередь? Ищу пример на проде.",
+    sentiment: "neutral",
+  },
+  {
+    source: "@retail_analytics",
+    platform: "Telegram",
+    author: "Наталья Ж.",
+    text: "Доставка снова опоздала на два дня, второй заказ подряд.",
+    sentiment: "negative",
+  },
+  {
+    source: "wa.me/logistics-open",
+    platform: "WhatsApp",
+    author: "Павел Д.",
+    text: "Склад подтвердил отгрузку, трек-номер пришёл моментально.",
+    sentiment: "positive",
+  },
+  {
+    source: "@media_monitor",
+    platform: "Telegram",
+    author: "Newsroom Bot",
+    text: "Свежая сводка: упоминания категории выросли на 9% за сутки.",
+    sentiment: "neutral",
+  },
+  {
+    source: "discord.gg/gaming-hub",
+    platform: "Discord",
+    author: "vortex",
+    text: "Приложение опять выкидывает из аккаунта после обновления.",
+    sentiment: "negative",
+  },
+  {
+    source: "@pharma_news",
+    platform: "Telegram",
+    author: "Ирина М.",
+    text: "Интеграция с учётной системой заработала без правок на нашей стороне.",
+    sentiment: "positive",
+  },
+  {
+    source: "@crypto_digest_ru",
+    platform: "Telegram",
+    author: "Глеб Н.",
+    text: "Обсуждаем подписку на аналитику — кто уже пробовал годовой план?",
+    sentiment: "neutral",
+  },
+  {
+    source: "wa.me/open-retail",
+    platform: "WhatsApp",
+    author: "Ксения Б.",
+    text: "Возврат висит в обработке пятый день, статус не меняется.",
+    sentiment: "negative",
+  },
+  {
+    source: "@retail_analytics",
+    platform: "Telegram",
+    author: "Максим О.",
+    text: "Маркетплейс выкатил новый отчёт по когортам, данные сходятся с нашими.",
+    sentiment: "positive",
+  },
+]
+
+export const datasets: Dataset[] = [
+  {
+    id: "ds-01",
+    name: "Упоминания бренда · неделя 34",
+    source: "@crypto_digest_ru",
+    rows: 48210,
+    format: "CSV",
+    createdAt: "28 авг 2026",
+    size: "12,4 МБ",
+  },
+  {
+    id: "ds-02",
+    name: "Тональность обсуждений доставки",
+    source: "@retail_analytics",
+    rows: 21764,
+    format: "JSON",
+    createdAt: "27 авг 2026",
+    size: "8,1 МБ",
+  },
+  {
+    id: "ds-03",
+    name: "Каналы Discord · сырые сообщения",
+    source: "discord.gg/devs-community",
+    rows: 132090,
+    format: "JSON",
+    createdAt: "25 авг 2026",
+    size: "44,7 МБ",
+  },
+  {
+    id: "ds-04",
+    name: "Ключевые слова · логистика",
+    source: "wa.me/logistics-open",
+    rows: 9312,
+    format: "CSV",
+    createdAt: "24 авг 2026",
+    size: "2,3 МБ",
+  },
+  {
+    id: "ds-05",
+    name: "Поток упоминаний (стрим)",
+    source: "Все источники",
+    rows: 512400,
+    format: "API",
+    createdAt: "22 авг 2026",
+    size: "поток",
+  },
+  {
+    id: "ds-06",
+    name: "Медиа-повестка · август",
+    source: "@media_monitor",
+    rows: 63870,
+    format: "CSV",
+    createdAt: "20 авг 2026",
+    size: "16,9 МБ",
+  },
+  {
+    id: "ds-07",
+    name: "Негативные обращения · выборка",
+    source: "Все источники",
+    rows: 7405,
+    format: "JSON",
+    createdAt: "18 авг 2026",
+    size: "3,2 МБ",
+  },
+]
+
 export const currentUser = {
   name: "Максим Орлов",
   email: "maxim@onixdata.io",
@@ -425,3 +570,5 @@ export const currentUser = {
 export const notificationsCount = 5
 
 export const demoApiKey = "onix_sk_demo_4f2b91c07ae54d18bd3c6a0f7e15"
+
+export const exportFormats: DatasetFormat[] = ["CSV", "JSON", "API"]

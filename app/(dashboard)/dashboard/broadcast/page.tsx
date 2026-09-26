@@ -7,18 +7,34 @@ export const metadata: Metadata = {
   title: "Рассылка Viber",
 }
 
-export default function BroadcastPage() {
+interface BroadcastPageProps {
+  searchParams?: {
+    instance?: string
+    deviceId?: string
+  }
+}
+
+export default function BroadcastPage({ searchParams }: BroadcastPageProps) {
+  const deviceId = searchParams?.instance || searchParams?.deviceId
+  const title = deviceId ? `Рассылка: ${deviceId}` : "Рассылка Viber"
+
   return (
     <>
-      <Topbar title="Рассылка Viber" />
+      <Topbar title={title} />
 
       <main className="flex-1 space-y-6 p-4 sm:p-6">
-        <p className="text-sm text-muted-foreground">
-          Отправляйте сообщения в выбранные группы по расписанию, чередуя
-          формулировки и сохраняя историю последней отправки.
-        </p>
+        <div>
+          <h2 className="text-lg font-semibold">
+            {deviceId ? `Рассылка инстанса: ${deviceId}` : "Рассылка Viber"}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {deviceId
+              ? `Массовая отправка сообщений по группам для инстанса ${deviceId}.`
+              : "Отправляйте сообщения в выбранные группы по расписанию, чередуя формулировки и сохраняя историю последней отправки."}
+          </p>
+        </div>
 
-        <ViberBroadcastPanel />
+        <ViberBroadcastPanel deviceId={deviceId} />
       </main>
     </>
   )

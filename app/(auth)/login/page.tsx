@@ -1,14 +1,17 @@
 "use client"
 
+import * as React from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { MailIcon } from "lucide-react"
+import { MailIcon, Loader2Icon } from "lucide-react"
 import { useForm } from "react-hook-form"
 import { toast } from "sonner"
 import { z } from "zod"
 
 import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
+import { isSupabaseConfigured } from "@/lib/supabase/config"
 import { AuthAltAction } from "@/components/auth/auth-alt-action"
 import { AuthDivider } from "@/components/auth/auth-divider"
 import { AuthHeading } from "@/components/auth/auth-heading"
@@ -30,25 +33,21 @@ import {
 } from "@/components/ui/form"
 import { IconInput, PasswordInput } from "@/components/ui/icon-input"
 
-import * as React from "react"
-import { useAuth } from "@/lib/supabase/auth-context"
-import { Loader2Icon } from "lucide-react"
-
 const loginSchema = z.object({
   email: z
     .string()
     .min(1, "Укажите email")
     .email("Введите корректный email"),
-  password: z.string().min(8, "Пароль должен быть не короче 8 символов"),
+  password: z.string().min(6, "Пароль должен быть не короче 6 символов"),
   remember: z.boolean(),
 })
 
 type LoginValues = z.infer<typeof loginSchema>
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
-  const { signIn } = useAuth()
-  const [isSubmitting, setIsSubmitting] = React.useState(false)
+  const searchParams = useSearchParams()
+  const nextUrl = searchParams.get("next") || "/dashboard"
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
@@ -56,25 +55,44 @@ export default function LoginPage() {
   })
 
   const onSubmit = async (values: LoginValues) => {
-    setIsSubmitting(true)
+    const isConfigured = isSupabaseConfigured()
+
+    if (!isConfigured) {
+      toast.success("Вход выполнен (демо-режим)", {
+        description: `${values.email}. Supabase не настроен в .env.local.`,
+      })
+      router.push(nextUrl)
+      return
+    }
+
     try {
-      const { error } = await signIn(values.email, values.password)
+      const supabase = createClient()
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: values.email,
+        password: values.password,
+      })
+
       if (error) {
         toast.error("Ошибка входа", {
-          description: error.message || "Неверный email или пароль",
+          description:
+            error.message === "Invalid login credentials"
+              ? "Неверный email или пароль. Если аккаунт ещё не создан, перейдите в «Регистрация»."
+              : error.message,
         })
         return
       }
-      toast.success("Вход выполнен", {
-        description: "Добро пожаловать в OnixData. Открываем дашборд.",
+
+      if (data.user) {
+        toast.success("Вход выполнен", {
+          description: `Добро пожаловать, ${data.user.email}!`,
+        })
+        router.push(nextUrl)
+        router.refresh()
+      }
+    } catch (err) {
+      toast.error("Ошибка соединения", {
+        description: err instanceof Error ? err.message : String(err),
       })
-      router.push("/dashboard")
-    } catch (err: unknown) {
-      toast.error("Не удалось выполнить вход", {
-        description: err instanceof Error ? err.message : "Неизвестная ошибка",
-      })
-    } finally {
-      setIsSubmitting(false)
     }
   }
 
@@ -165,21 +183,17 @@ export default function LoginPage() {
 
           <Button
             type="submit"
-            disabled={isSubmitting}
+            disabled={form.formState.isSubmitting}
             className={cn(
               "h-11 w-full text-[0.95rem]",
               authPress,
               authEnter.submit
             )}
           >
-            {isSubmitting ? (
-              <>
-                <Loader2Icon className="mr-2 size-4 animate-spin" />
-                Вход...
-              </>
-            ) : (
-              "Войти"
-            )}
+            {form.formState.isSubmitting ? (
+              <Loader2Icon className="size-4 animate-spin mr-2" />
+            ) : null}
+            Войти
           </Button>
         </form>
       </Form>
@@ -195,5 +209,13 @@ export default function LoginPage() {
         action="Регистрация"
       />
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <React.Suspense fallback={<div className="h-64" />}>
+      <LoginForm />
+    </React.Suspense>
   )
 }

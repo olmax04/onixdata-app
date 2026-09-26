@@ -15,7 +15,6 @@
 | [`app/globals.css`](../app/globals.css)               | CSS-переменные палитры, утилиты `.onix-glow`, анимации |
 | [`tailwind.config.ts`](../tailwind.config.ts)         | Маппинг переменных в Tailwind-классы, радиусы, шрифт   |
 | [`lib/design-tokens.ts`](../lib/design-tokens.ts)     | Реестр токенов с HEX/HSL — только для документации     |
-| [`lib/format.ts`](../lib/format.ts)                   | `formatNumber` и `formatDelta` — единое форматирование чисел |
 | [`components/ui/`](../components/ui)                  | Базовые компоненты shadcn/ui, стиль `new-york`         |
 | [`components/auth/auth-motion.ts`](../components/auth/auth-motion.ts) | Ступени каскада и классы отклика       |
 
@@ -40,20 +39,13 @@
 5. **Нет зелёного success и жёлтого warning.** Позитив выражается кораллом,
    негатив — нейтрально (outline-бейдж), ошибка — `--destructive`. Третьего
    статусного цвета в системе не существует.
-   **Осознанное исключение — панели Viber** (`components/dashboard/viber-*`):
-   там показаны состояния внешнего бэкенда (сессия, задача, синхронизация), и
-   для них взяты статусные цвета Tailwind — emerald, amber, blue, indigo. Это
-   служебная индикация процесса, а не расширение палитры продукта: в остальном
-   интерфейсе таких цветов быть не должно.
-6. **Демо-режим виден вне разделов Viber.** За пределами
-   `components/dashboard/viber-*` бэкенда нет: каждое действие отвечает тостом
-   с пометкой «Демо-режим», описания карточек и диалогов честно предупреждают,
-   что ничего не сохраняется и не отправляется. Панели Viber — исключение: они
-   ходят в реальный сервис.
-7. **Русский интерфейс.** Копия, числа (`formatNumber` / `formatDelta` из
-   [`lib/format.ts`](../lib/format.ts)) и 24-часовое время.
+6. **Демо-режим виден.** Бэкенда нет: каждое действие отвечает тостом с
+   пометкой «Демо-режим», описания карточек и диалогов честно предупреждают,
+   что ничего не сохраняется и не отправляется.
+7. **Русский интерфейс.** Копия, числа (`toLocaleString("ru-RU")`) и
+   24-часовое время.
 8. **Доступность по умолчанию.** `aria-label` на icon-кнопках, `sr-only`
-   заголовок и описание у `Sheet`, кольцо `focus-visible`,
+   заголовки у `Sheet` и служебных колонок таблиц, кольцо `focus-visible`,
    `aria-current="page"` у активного пункта навигации, `aria-hidden` на
    декоративной графике, полное отключение анимаций по
    `prefers-reduced-motion`.
@@ -154,10 +146,7 @@ HEX в компонентах не пишется: единственное ме
 #### Прозрачности
 
 Набор закрыт: новых ступеней не заводим. Список синхронизирован с
-`alphaTokens` в [`lib/design-tokens.ts`](../lib/design-tokens.ts). Исключение —
-всё те же панели Viber: подложки статусов бэкенда там задаются альфами
-статусных цветов Tailwind (`bg-indigo-500/10`, `border-indigo-500/30` и
-подобные) и в этот перечень не входят.
+`alphaTokens` в [`lib/design-tokens.ts`](../lib/design-tokens.ts).
 
 | Значение | Где используется |
 | --- | --- |
@@ -194,20 +183,18 @@ HEX в компонентах не пишется: единственное ме
 `--font-inter-tight` (`display: "swap"`). На `body`:
 `font-feature-settings: "rlig" 1, "calt" 1` и `-webkit-font-smoothing: antialiased`.
 
-**Веса** — рабочая пара 500 и 600: `font-medium` встречается чаще всего,
-`font-semibold` идёт следом. `font-normal` — вспомогательный, `font-bold`
-использован ровно один раз (слово «Onix» в вордмарке).
+**Веса** (по факту использования): `font-medium` — 28 раз, `font-semibold` —
+16, `font-normal` — 8, `font-bold` — 1 (слово «Onix» в вордмарке). Рабочая
+пара — 500 и 600.
 
-**Размеры** — основа интерфейса это `text-sm`, вторая по частоте ступень —
-`text-xs`; `text-lg` берут заголовки блоков и диалогов. Остальные ступени
-(`text-base`, `text-2xl`, `text-3xl` и точечные `text-[…]`) единичны и
-перечислены в разделе «Роли» ниже.
+**Размеры** (по факту): `text-sm` — 51 раз, `text-xs` — 24, `text-lg` — 7,
+`text-[0.95rem]` — 5, `text-[0.7rem]` — 4, `text-base` — 3, `text-[0.8rem]` — 2,
+`text-[0.65rem]` — 2, `text-2xl` — 2, `text-3xl` — 2, по одному —
+`text-[2rem]`, `text-[1.05rem]`, `text-[11px]`, `text-[10px]`.
 
-> Конкретные счётчики здесь намеренно не приводятся: они устаревают с каждой
-> правкой. Если понадобилось пересчитать — считайте по `app/` и `components/`
-> **без** самой страницы стайлгайда (`app/design-system/`,
-> `components/design-system/`) и без панелей Viber
-> (`components/dashboard/viber-*`): и то и другое исказило бы картину.
+> Счётчики выше посчитаны по `app/` и `components/` **без** самой страницы
+> стайлгайда: каталоги `app/design-system/` и `components/design-system/`
+> из подсчёта исключены, иначе документация накручивала бы собственные цифры.
 
 #### Роли
 
@@ -226,7 +213,7 @@ HEX в компонентах не пишется: единственное ме
 | Caption | `text-xs text-muted-foreground` | Подписи под значением, handle источника, © в auth. |
 | Form message | `text-[0.8rem] font-medium text-destructive` | `FormMessage`; `FormDescription` — тот же размер, но muted. |
 | Auth button | `text-[0.95rem]` | Крупные кнопки auth-форм высотой `h-11`. |
-| Mono | `font-mono tabular-nums` | Время, числа в таблицах, API-ключ, имя набора в мок-скриншоте. |
+| Mono | `font-mono tabular-nums` | Время, числа в таблицах, API-ключ, имена датасетов в мок-скриншоте. |
 | Micro | `text-[0.7rem]` / `text-[0.65rem]` / `text-[11px]` / `text-[10px]` | Только мок-скриншот на auth, счётчик в бейдже топбара и число в теге ключевого слова. |
 | Wordmark | `text-[1.05rem]` + `font-bold` / `font-normal` | `BrandLogo`: «Onix» жирным, «Data» обычным, точка кораллом. |
 
@@ -324,7 +311,7 @@ inline-SVG в собственных цветах бренда.
 
 | Размер          | Где                                                                     |
 | --------------- | ----------------------------------------------------------------------- |
-| `size-2`        | Точка статуса (`StatusDot`), индикатор «в эфире» в панелях Viber.        |
+| `size-2`        | Точка статуса (`StatusDot`), индикатор «в эфире».                        |
 | `size-3`, `size-3.5` | Иконка тренда в `MetricCard`, микро-элементы мок-скриншота.        |
 | `size-4`        | Размер по умолчанию: кнопки, пункты меню, иконка в поле, навигация.       |
 | `size-6`        | Иконка внутри круга `size-12` на экране успеха.                          |
@@ -352,7 +339,7 @@ inline-SVG в собственных цветах бренда.
 | `.auth-ring`                      | 900 мс, один раз, старт 250 мс                                         | Кольцо вокруг иконки на экране успеха (не бесконечный пульс).         |
 | `authPress`                       | `active:scale-[0.98]` с явным списком `transition-[…]`                 | Отклик крупных auth-кнопок.                                           |
 | `authFormMessage`                 | `animate-in fade-in slide-in-from-top-1 duration-200`                  | Появление сообщения валидации.                                        |
-| `animate-pulse`                   | бесконечно                                                             | Индикатор «в эфире» и бейдж активной задачи в панелях Viber, фон `Skeleton`. |
+| `animate-pulse`                   | бесконечно                                                             | Индикатор «в эфире» на `/dashboard/stream`, фон `Skeleton`.           |
 | `transition-colors`               | 150 мс по умолчанию                                                    | Все интерактивные элементы.                                           |
 
 Три вещи, которые легко сломать:
@@ -394,9 +381,8 @@ inline-SVG в собственных цветах бренда.
   обычным (`font-normal`), точка кораллом (`text-primary`).
 - **Размеры** — `size` по умолчанию 26 (сайдбар, топбар стайлгайда), 30 в auth.
 - **`markOnly`** скрывает вордмарк, оставляя метку.
-- **`sr-only` «OnixData»** добавляется только при `markOnly`: с вордмарком
-  название уже есть в тексте, и вторая подпись заставила бы скринридер
-  прочитать его дважды. Ссылка-логотип озвучена в обоих случаях.
+- Внутри есть `<span className="sr-only">OnixData</span>`, поэтому
+  ссылка-логотип уже озвучена и дополнительная подпись не нужна.
 
 Дополнительные бренд-мотивы: коралловое свечение `.onix-glow` и контурные
 гексагоны на auth-панели.
@@ -411,9 +397,9 @@ inline-SVG в собственных цветах бренда.
 min-h-screen bg-background lg:grid lg:grid-cols-2 lg:gap-3 lg:p-3
 ├── левая колонка  .onix-glow  px-5 py-8 sm:px-10 lg:px-8
 │   └── mx-auto max-w-[25rem] flex-1 flex-col gap-6
-│       ├── header → BrandLogo size=30   (ступень 1)
-│       ├── main → children (форма)      (ступени 2–9)
-│       └── footer → © text-xs muted     (ступень 10)
+│       ├── BrandLogo size=30            (ступень 1)
+│       ├── children (форма)             (ступени 2–9)
+│       └── © text-xs muted              (ступень 10)
 └── AuthShowcase  hidden lg:block
     └── sticky top-3 h-[calc(100vh-1.5rem)] rounded-[2rem] bg-primary px-10 py-12
 ```
@@ -467,15 +453,15 @@ flex min-h-screen bg-background
 | **Input** | h-9, `text-base md:text-sm` | 16px на мобильных, чтобы iOS не зумил при фокусе. | [`input.tsx`](../components/ui/input.tsx) |
 | **IconInput / PasswordInput** | h-11, `pl-10` (пароль — ещё `pr-10`) | Иконка стоит в DOM перед инпутом, поэтому подсветку даёт `group-focus-within`, а не `peer-focus`. Лейблы в auth скрыты, поэтому ошибку показывает само поле: `aria-[invalid=true]:border-destructive` + `:focus-visible:ring-destructive`. Переключатель видимости — с `aria-label`, смена `EyeIcon` ↔ `EyeOffIcon` пересоздаёт узел, и анимация отыгрывает. | [`icon-input.tsx`](../components/ui/icon-input.tsx) |
 | **Label** | — | `text-sm font-medium leading-none`, гасится при `peer-disabled`. | [`label.tsx`](../components/ui/label.tsx) |
-| **Form** | `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage` | react-hook-form + zod через `zodResolver`. `FormControl` сам проставляет `id`, `aria-describedby` и `aria-invalid`. В `aria-describedby` попадают только существующие узлы: `FormDescription` и `FormMessage` регистрируются в `FormItem`, id сообщения добавляется только когда `FormMessage` отрисован и есть ошибка, а без обоих атрибута нет вовсе. Формы всегда `noValidate` — валидацию ведёт zod. | [`form.tsx`](../components/ui/form.tsx) |
+| **Form** | `FormField`, `FormItem`, `FormLabel`, `FormControl`, `FormDescription`, `FormMessage` | react-hook-form + zod через `zodResolver`. `FormControl` сам проставляет `id`, `aria-describedby` и `aria-invalid`. Формы всегда `noValidate` — валидацию ведёт zod. | [`form.tsx`](../components/ui/form.tsx) |
 | **Select** | `SelectTrigger`, `SelectContent`, `SelectItem`, `SelectLabel`, `SelectSeparator` | Триггер повторяет геометрию инпута (h-9, `rounded-md`, `border-input`). Контент — `position="popper"`, `bg-popover`, `shadow-md`. | [`select.tsx`](../components/ui/select.tsx) |
 | **Checkbox** | 4×4 | `border-primary`, во включённом состоянии `bg-primary`. Согласие в форме. | [`checkbox.tsx`](../components/ui/checkbox.tsx) |
 | **Switch** | 9×5, thumb 4×4 | `data-[state=checked]:bg-primary`, выключенный — `bg-input`. Настройка, применяемая сразу. | [`switch.tsx`](../components/ui/switch.tsx) |
 | **Tabs** | h-9 дорожка | Дорожка `bg-muted rounded-lg p-1`, активный таб поднимается на `bg-background` с `shadow`. | [`tabs.tsx`](../components/ui/tabs.tsx) |
-| **Table** | — | Обёртка `overflow-x-auto`, у колонок `min-w-[…]`, числа справа в `font-mono tabular-nums`. Заголовки — `text-muted-foreground font-medium`. Hover строки — `bg-muted/50`. | [`table.tsx`](../components/ui/table.tsx) |
+| **Table** | — | Обёртка `overflow-x-auto`, у колонок `min-w-[…]`, числа справа в `font-mono tabular-nums`. Заголовки — `text-muted-foreground font-medium`. Служебная колонка действий подписана через `sr-only`. Hover строки — `bg-muted/50`. | [`table.tsx`](../components/ui/table.tsx) |
 | **Dialog** | `max-w-lg` по умолчанию, в проекте — `sm:max-w-md` | Оверлей `bg-black/80`. `DialogFooter`: слева ghost «Отмена», справа основное действие; в проекте добавляется `gap-2 sm:gap-2`. Закрытие сбрасывает форму. Кнопка закрытия несёт `sr-only` «Закрыть». | [`dialog.tsx`](../components/ui/dialog.tsx) |
 | **Sheet** | `side`: top / bottom / left / right; `w-3/4 sm:max-w-sm` | Мобильная навигация — `side="left" w-64 p-0`. `SheetTitle` и `SheetDescription` обязательны, но скрыты `sr-only`. | [`sheet.tsx`](../components/ui/sheet.tsx) |
-| **DropdownMenu** | `Content`, `Item`, `CheckboxItem`, `RadioItem`, `Label`, `Separator`, `Shortcut`, `Sub*` | Деструктивный пункт — `className="text-destructive focus:bg-destructive/15 focus:text-destructive"`: без первых двух классов цвет теряется при наведении, а на стандартном `focus:bg-accent` красный текст даёт контраст 4,16:1 — ниже нормы. Пункт-ссылка — `<DropdownMenuItem asChild><Link/></DropdownMenuItem>`. | [`dropdown-menu.tsx`](../components/ui/dropdown-menu.tsx) |
+| **DropdownMenu** | `Content`, `Item`, `CheckboxItem`, `RadioItem`, `Label`, `Separator`, `Shortcut`, `Sub*` | Деструктивный пункт — `className="text-destructive focus:text-destructive"`, иначе цвет теряется при наведении. Пункт-ссылка — `<DropdownMenuItem asChild><Link/></DropdownMenuItem>`. | [`dropdown-menu.tsx`](../components/ui/dropdown-menu.tsx) |
 | **Tooltip** | — | Единственный элемент с коралловой заливкой по умолчанию: `bg-primary text-primary-foreground text-xs`. Требует `TooltipProvider`. Подсказка не заменяет доступное имя. | [`tooltip.tsx`](../components/ui/tooltip.tsx) |
 | **Avatar** | h-9 по умолчанию, в проекте `size-8` | Изображений нет — всегда `AvatarFallback` с инициалами `text-xs font-medium` на `bg-muted` (в сайдбаре — `bg-sidebar-accent`). | [`avatar.tsx`](../components/ui/avatar.tsx) |
 | **Separator** | `horizontal` / `vertical` | `bg-border`, 1px. Для вертикального нужно задать высоту (`h-6`). | [`separator.tsx`](../components/ui/separator.tsx) |
@@ -489,13 +475,14 @@ flex min-h-screen bg-background
 
 | Компонент | Назначение | Правила | Файл |
 | --------- | ---------- | ------- | ---- |
-| **BrandLogo** | Логотип | `size` (26/30), `markOnly`. При `markOnly` подпись `sr-only` «OnixData»; с вордмарком её нет — название уже в тексте. | [`brand-logo.tsx`](../components/brand-logo.tsx) |
+| **BrandLogo** | Логотип | `size` (26/30), `markOnly`. Внутри `sr-only` «OnixData». | [`brand-logo.tsx`](../components/brand-logo.tsx) |
 | **MetricCard** | Карточка метрики | Значение `text-2xl font-semibold tabular-nums`; дельта коралловая при росте и `muted-foreground` при падении — красного здесь нет. Спарклайн `h-12 w-24`, `isAnimationActive={false}`, обёрнут в `aria-hidden`. Градиент id уникален по `metric.id`. | [`metric-card.tsx`](../components/dashboard/metric-card.tsx) |
 | **StatusDot / StatusBadge / SentimentBadge** | Статус источника и тональность | См. таблицы семантики в §2.1. `StatusDot` — `aria-hidden`, смысл несёт текст рядом. | [`badges.tsx`](../components/dashboard/badges.tsx) |
-| **Topbar** | Шапка раздела | `title` в `h1` — страница свой заголовок не дублирует. Поиск с `md`, в `<form role="search">` с контролируемым полем и демо-тостом на отправку. «Новая задача» отдельными кнопками для `sm+` и мобильного (у второй — `aria-label`). Счётчик уведомлений — `span` с `badgeVariants()` (`Badge` — это `div`, внутри `button` он недопустим), `h-4 min-w-4 text-[10px]`, у кнопки `aria-label` с числом. | [`topbar.tsx`](../components/dashboard/topbar.tsx) |
+| **Topbar** | Шапка раздела | `title` в `h1`. Поиск с `md`, «Новая задача» отдельными кнопками для `sm+` и мобильного (у второй — `aria-label`). Счётчик уведомлений — `Badge` `h-4 min-w-4 text-[10px]` в углу icon-кнопки, у кнопки `aria-label` с числом. | [`topbar.tsx`](../components/dashboard/topbar.tsx) |
 | **AppSidebar / MobileSidebar** | Навигация | Общий `navItems`; активность считает `isItemActive` (точное совпадение для `/dashboard`, префикс для остальных). Активный пункт — `bg-sidebar-accent` + `aria-current="page"` + коралловая иконка. | [`app-sidebar.tsx`](../components/dashboard/app-sidebar.tsx) |
-| **MentionsChart** | График упоминаний | `aspect-auto h-[280px] w-full`, заливка — градиент `0.35 → 0.02` от `var(--color-mentions)`, `CartesianGrid vertical={false} strokeDasharray="3 3"`, оси без линий и засечек, `cursor={false}`, `isAnimationActive={false}` — как в `MetricCard`. | [`mentions-chart.tsx`](../components/dashboard/mentions-chart.tsx) |
-| **NewParseDialog** | Диалог с формой | Принимает `trigger` как `ReactNode` — один и тот же диалог открывается из топбара и из галереи. `sm:max-w-md`, форма `space-y-4`, `noValidate`, футер `gap-2 sm:gap-2`. «Отмена» — `DialogClose asChild`, иначе `onOpenChange` не сработает и форма не сбросится. У каждого поля есть значение по умолчанию (`platform: ""`), иначе `Select` прыгает между uncontrolled и controlled. Успех — `toast.success` с пометкой демо-режима. | [`new-parse-dialog.tsx`](../components/dashboard/new-parse-dialog.tsx) |
+| **MentionsChart** | График упоминаний | `aspect-auto h-[280px] w-full`, заливка — градиент `0.35 → 0.02` от `var(--color-mentions)`, `CartesianGrid vertical={false} strokeDasharray="3 3"`, оси без линий и засечек, `cursor={false}`. | [`mentions-chart.tsx`](../components/dashboard/mentions-chart.tsx) |
+| **SourcesTable / DatasetsTable** | Таблицы | `overflow-x-auto`, `min-w` у колонок, числа `text-right font-mono tabular-nums` через `toLocaleString("ru-RU")`. Двухстрочная ячейка: название `text-sm font-medium` + подпись `text-xs text-muted-foreground`. Действия строки — `DropdownMenu` с `aria-label`, включающим имя источника. | [`sources-table.tsx`](../components/dashboard/sources-table.tsx), [`datasets-table.tsx`](../components/dashboard/datasets-table.tsx) |
+| **NewParseDialog / ExportDialog** | Диалоги с формой | Принимают `trigger` как `ReactNode` — один и тот же диалог используется из топбара и со страницы. `sm:max-w-md`, форма `space-y-4`, `noValidate`, футер `gap-2 sm:gap-2`. Закрытие вызывает `form.reset()`. Успех — `toast.success` с пометкой демо-режима. | [`new-parse-dialog.tsx`](../components/dashboard/new-parse-dialog.tsx), [`export-dialog.tsx`](../components/dashboard/export-dialog.tsx) |
 | **SettingsTabs** | Настройки | Три вкладки, каждая — одна `Card`. API-ключ в `Input readOnly font-mono text-xs`; копирование через `navigator.clipboard` с `try/catch` и тостом на оба исхода. | [`settings-tabs.tsx`](../components/dashboard/settings-tabs.tsx) |
 | **AuthHeading** | Заголовок auth | `title` + `description`; `className` и `descriptionClassName` разные, потому что это соседние ступени каскада. `forwardRef` + `tabIndex={-1}` нужны, чтобы перевести фокус на экран успеха. | [`auth-heading.tsx`](../components/auth/auth-heading.tsx) |
 | **AuthDivider** | Разделитель «или» | Линия `border-t` за текстом на `bg-background`, `text-xs uppercase`. | [`auth-divider.tsx`](../components/auth/auth-divider.tsx) |
@@ -543,8 +530,8 @@ flex min-h-screen bg-background
 - Оборачивать таблицы в `overflow-x-auto` и задавать колонкам `min-w`.
 - Писать классы анимаций литеральными строками.
 - Помечать демо-действия тостом с описанием, что ничего не произошло.
-- Форматировать числа через `formatNumber` / `formatDelta` из
-  [`lib/format.ts`](../lib/format.ts) и давать им `tabular-nums`.
+- Форматировать числа через `toLocaleString("ru-RU")` и давать им
+  `tabular-nums`.
 
 **Don't**
 
@@ -569,13 +556,12 @@ flex min-h-screen bg-background
 - **Язык** — русский, включая служебные подписи и `aria-label`.
 - **Заголовки auth** — короткие, с точкой: «Вход в аккаунт.», «Создать
   аккаунт.», «Восстановление доступа.», «Проверьте почту.»
-- **Заголовки разделов** — существительное без точки: «Обзор», «Группы Viber»,
-  «Мониторинг Viber», «Рассылка Viber», «Настройки».
+- **Заголовки разделов** — существительное без точки: «Обзор», «Источники»,
+  «Поток», «Датасеты», «Настройки».
 - **Демо-пометки** — в описании, а не в заголовке: «Демо-режим: изменения не
   сохраняются», «Демо-данные за последние 24 часа», «Демо-режим: файл не
   формируется».
-- **Числа** — `formatNumber` / `formatDelta` из
-  [`lib/format.ts`](../lib/format.ts): `1 284 903`, `+12,4%`, `12,4 МБ`.
+- **Числа** — `toLocaleString("ru-RU")`: `1 284 903`, `+12,4%`, `12,4 МБ`.
 - **Время** — 24-часовое: `14:32:08`,
   `toLocaleTimeString("ru-RU", { hour12: false })`.
 - **Ошибки валидации** — повелительное наклонение, коротко: «Укажите email»,
@@ -600,7 +586,6 @@ flex min-h-screen bg-background
    страницы; широкий контент скроллится внутри своего контейнера.
 6. **Проверить демо-контракт.** Действие без бэкенда обязано ответить тостом
    с честным описанием.
-7. **Прогнать проверки:** `npm run typecheck`, `npm run lint` и
-   `npm run test`.
+7. **Прогнать проверки:** `npm run typecheck` и `npm run lint`.
 8. **Добавить в стайлгайд.** Новый компонент или токен появляется на
    `/design-system` — подкомпоненты лежат в `components/design-system/`.

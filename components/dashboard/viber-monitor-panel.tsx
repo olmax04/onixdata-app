@@ -62,24 +62,51 @@ import {
   messageHasMedia,
   messagePreviewText,
 } from "@/lib/viber-parser/message-display"
-import { usePollLoop } from "@/lib/viber-parser/use-poll-loop"
 
-const MAX_ROWS = 200
+const MAX_ROWS = 2000
 const PAGE_SIZE = 20
 const STATUS_POLL_MS = 5000
+/** Инстанс по умолчанию — тот, на который смотрит ADB_HOST/ADB_PORT. */
+const DEFAULT_DEVICE_ID = "default"
+
+function instanceOf(item: { deviceId?: string | null }): string {
+  return item.deviceId?.trim() || DEFAULT_DEVICE_ID
+}
 
 function formatMsgTime(iso: string): string {
   const d = new Date(iso)
   if (isNaN(d.getTime())) return "—"
-  const sameDay = d.toDateString() === new Date().toDateString()
-  return sameDay
-    ? d.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-    : d.toLocaleString("ru-RU", {
-        day: "2-digit",
-        month: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
+  return d.toLocaleString("ru-RU", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  })
+}
+
+function messageKey(message: MonitoredMessageDto): string {
+  // Row id сообщения локален для инстанса, поэтому ключ — пара инстанс + id.
+  return `${instanceOf(message)}:${message.id}`
+}
+
+function mergeMessages(
+  current: MonitoredMessageDto[],
+  incoming: MonitoredMessageDto[]
+): MonitoredMessageDto[] {
+  const byId = new Map(current.map((message) => [messageKey(message), message]))
+  for (const message of incoming) {
+    byId.set(messageKey(message), message)
+  }
+  return Array.from(byId.values())
+    .sort((a, b) => {
+      const timeA = new Date(a.date).getTime() || 0
+      const timeB = new Date(b.date).getTime() || 0
+      if (timeB !== timeA) return timeB - timeA
+      return b.id - a.id
+    })
+    .slice(0, MAX_ROWS)
 }
 
 function filenameFromDisposition(header: string | null, fallback: string): string {
@@ -112,44 +139,91 @@ async function viberJson<T>(path: string, init?: RequestInit): Promise<T> {
 
 type GroupRow = {
   conversationId: number
+  groupKey: string | null
   name: string
   memberCount?: number
   enabled: boolean
+  /** Строка добралась из реестра мониторинга — на инстансе такой группы нет. */
+  missingOnDevice: boolean
 }
 
+/** Подпись строки, которую нельзя включить обратно. */
+const MISSING_ON_DEVICE_HINT = "Нет на инстансе — можно только снять с мониторинга"
+
+function groupKeyOf(group: ViberGroup): string | null {
+  if (group.groupId === null || group.groupId === undefined) return null
+  const value = String(group.groupId).trim()
+  return value ? value : null
+}
+
+/**
+ * Список групп приходит из разных источников (устройство + Supabase), поэтому
+ * его conversationId может принадлежать чужому аккаунту. Совпадение с
+ * мониторингом ищется в пределах одного инстанса: сначала по глобальному
+ * groupKey, потом по локальному ID.
+ */
 function buildGroupRows(
   groups: ViberGroup[],
-  monitored: MonitoredGroupDto[]
+  monitored: MonitoredGroupDto[],
+  deviceId?: string
 ): GroupRow[] {
-  const monitoredById = new Map(monitored.map((item) => [item.conversationId, item]))
+  const instance = deviceId?.trim() || DEFAULT_DEVICE_ID
+  const onInstance = monitored.filter((item) => instanceOf(item) === instance)
+  const monitoredById = new Map(onInstance.map((item) => [item.conversationId, item]))
+  const monitoredByKey = new Map(
+    onInstance
+      .filter((item) => Boolean(item.groupKey))
+      .map((item) => [String(item.groupKey), item])
+  )
   const rows: GroupRow[] = groups
     .filter((group) => group.conversationType !== 0)
-    .map((group) => ({
-      conversationId: group.conversationId,
-      name: group.name || `Группа ${group.conversationId}`,
-      memberCount: group.memberCount,
-      enabled: monitoredById.get(group.conversationId)?.enabled ?? false,
-    }))
+    .map((group) => {
+      const key = groupKeyOf(group)
+      const match =
+        (key ? monitoredByKey.get(key) : undefined) ?? monitoredById.get(group.conversationId)
+      return {
+        conversationId: match?.conversationId ?? group.conversationId,
+        groupKey: key ?? match?.groupKey ?? null,
+        name: group.name || `Группа ${group.conversationId}`,
+        memberCount: group.memberCount,
+        enabled: match?.enabled ?? false,
+        missingOnDevice: false,
+      }
+    })
 
-  const seen = new Set(rows.map((row) => row.conversationId))
-  for (const item of monitored) {
-    if (seen.has(item.conversationId)) continue
+  const seenIds = new Set(rows.map((row) => row.conversationId))
+  const seenNames = new Set(rows.map((row) => (row.name || '').trim().toLowerCase()))
+  for (const item of onInstance) {
+    if (seenIds.has(item.conversationId)) continue
+    if (item.name && seenNames.has(item.name.trim().toLowerCase())) continue
+    // Группу удалили или аккаунт переустановили: включить такую запись заново
+    // нельзя — сервер ответит 404. Выключенную прячем, включённую показываем,
+    // чтобы её было чем снять с мониторинга.
+    if (!item.enabled) continue
     rows.push({
       conversationId: item.conversationId,
+      groupKey: item.groupKey ?? null,
       name: item.name || `Группа ${item.conversationId}`,
       enabled: item.enabled,
+      missingOnDevice: true,
     })
   }
 
   return rows.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name, "ru"))
 }
 
-export function ViberMonitorPanel() {
+export interface ViberMonitorPanelProps {
+  deviceId?: string
+  initialQuery?: string
+}
+
+export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorPanelProps = {}) {
   const [status, setStatus] = React.useState<MessageMonitorStatusDto | null>(null)
   const [groups, setGroups] = React.useState<ViberGroup[]>([])
   const [messages, setMessages] = React.useState<MonitoredMessageDto[]>([])
   const [isLiveConnected, setIsLiveConnected] = React.useState(false)
   const [loading, setLoading] = React.useState(true)
+  const [groupsError, setGroupsError] = React.useState<string | null>(null)
   const [togglingId, setTogglingId] = React.useState<number | null>(null)
   const [pollerBusy, setPollerBusy] = React.useState(false)
   const [exporting, setExporting] = React.useState(false)
@@ -157,60 +231,59 @@ export function ViberMonitorPanel() {
   const [sourceFilter, setSourceFilter] = React.useState("all")
   const [phoneFilter, setPhoneFilter] = React.useState("all")
   const [mediaFilter, setMediaFilter] = React.useState("all")
-  const [query, setQuery] = React.useState("")
+  const [query, setQuery] = React.useState(initialQuery)
   const [page, setPage] = React.useState(1)
 
-  const statusSeqRef = React.useRef(0)
-  const appliedStatusSeqRef = React.useRef(0)
+  // Без выбранного инстанса панель всё равно смотрит на один — тот, что по
+  // умолчанию. Иначе группы приходили бы с него, а лента — со всех сразу.
+  const instance = deviceId?.trim() || DEFAULT_DEVICE_ID
+  const withDevice = React.useCallback(
+    (path: string) => {
+      const separator = path.includes("?") ? "&" : "?"
+      return `${path}${separator}deviceId=${encodeURIComponent(instance)}`
+    },
+    [instance]
+  )
+
+  React.useEffect(() => {
+    if (initialQuery) {
+      setQuery(initialQuery)
+    }
+  }, [initialQuery])
 
   const refreshStatus = React.useCallback(async () => {
-    const seq = ++statusSeqRef.current
-    const next = await viberJson<MessageMonitorStatusDto>("messages/monitor/status")
-    // Устаревший ответ не должен перетирать более свежий.
-    if (seq < appliedStatusSeqRef.current) return next
-    appliedStatusSeqRef.current = seq
+    const next = await viberJson<MessageMonitorStatusDto>(withDevice("messages/monitor/status"))
     setStatus({
       ...next,
       groups: next.groups ?? [],
       liveWatch: next.liveWatch ?? false,
     })
     return next
-  }, [])
-
-  const mergeMessages = React.useCallback((incoming: MonitoredMessageDto[]) => {
-    if (!Array.isArray(incoming) || incoming.length === 0) return
-    setMessages((prev) => {
-      const byId = new Map<number, MonitoredMessageDto>()
-      for (const item of [...incoming, ...prev]) {
-        if (typeof item?.id !== "number") continue
-        if (!byId.has(item.id)) byId.set(item.id, item)
-      }
-      return Array.from(byId.values())
-        .sort((a, b) => b.id - a.id)
-        .slice(0, MAX_ROWS)
-    })
-  }, [])
-
-  /** Добор пропущенного за время обрыва SSE. */
-  const catchUpMessages = React.useCallback(async () => {
-    try {
-      const list = await viberJson<MonitoredMessageDto[]>("messages/monitored?limit=200")
-      mergeMessages(list)
-    } catch {
-      // ошибку добора показывать не нужно: следующий опрос статуса покажет связь
-    }
-  }, [mergeMessages])
+  }, [withDevice])
 
   const loadInitial = React.useCallback(async () => {
     setLoading(true)
     try {
       const [groupsRes, monitorStatus, list] = await Promise.allSettled([
-        viberJson<ViberGroupsResponse>("groups"),
-        viberJson<MessageMonitorStatusDto>("messages/monitor/status"),
-        viberJson<MonitoredMessageDto[]>("messages/monitored?limit=200"),
+        // Мониторинг можно включить только для группы, открытой на инстансе:
+        // записи из Supabase и архива ростеров в этом списке не нужны.
+        viberJson<ViberGroupsResponse>(withDevice("groups?onDevice=true")),
+        viberJson<MessageMonitorStatusDto>(withDevice("messages/monitor/status")),
+        viberJson<MonitoredMessageDto[]>(withDevice(`messages/monitored?limit=${MAX_ROWS}`)),
       ])
       if (groupsRes.status === "fulfilled") {
         setGroups(groupsRes.value.groups)
+        setGroupsError(null)
+      } else {
+        // Пустой список и недоступный инстанс — разные вещи: без причины
+        // панель выглядит так, будто на эмуляторе просто нет групп. Список
+        // чужого инстанса при этом обязан уйти с экрана.
+        setGroups([])
+        setGroupsError(
+          groupsRes.reason instanceof Error
+            ? groupsRes.reason.message
+            : "не удалось загрузить группы"
+        )
       }
       if (monitorStatus.status === "fulfilled") {
         setStatus({
@@ -220,7 +293,9 @@ export function ViberMonitorPanel() {
         })
       }
       if (list.status === "fulfilled") {
-        setMessages(Array.isArray(list.value) ? list.value : [])
+        setMessages((current) =>
+          mergeMessages(current, Array.isArray(list.value) ? list.value : [])
+        )
       }
       if (monitorStatus.status === "rejected" && list.status === "rejected") {
         toast.error("Не удалось загрузить мониторинг Viber")
@@ -228,63 +303,54 @@ export function ViberMonitorPanel() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [withDevice])
 
   React.useEffect(() => {
     void loadInitial()
   }, [loadInitial])
 
-  // Ошибка опроса цикл ронять не должна: следующий тик покажет актуальный статус.
-  const pollStatus = React.useCallback(async () => {
-    try {
-      await refreshStatus()
-    } catch {
-      // связь показывает сам статус, отдельный тост тут только мешал бы
-    }
+  React.useEffect(() => {
+    const id = window.setInterval(() => {
+      void refreshStatus().catch(() => undefined)
+    }, STATUS_POLL_MS)
+    return () => window.clearInterval(id)
   }, [refreshStatus])
 
-  // Следующий запрос стартует только после ответа предыдущего: медленный бэкенд
-  // не должен копить параллельные опросы. Скрытая вкладка не опрашивается,
-  // возврат к ней даёт немедленный запрос.
-  usePollLoop({ enabled: true, intervalMs: STATUS_POLL_MS, onTick: pollStatus })
-
   React.useEffect(() => {
+    let active = true
     const es = new EventSource("/api/viber/messages/events")
-    let hadError = false
-
     es.onopen = () => {
       setIsLiveConnected(true)
-      if (hadError) {
-        hadError = false
-        void catchUpMessages()
-      }
+      void viberJson<MonitoredMessageDto[]>(withDevice(`messages/monitored?limit=${MAX_ROWS}`))
+        .then((list) => {
+          if (!active) return
+          setMessages((current) =>
+            mergeMessages(current, Array.isArray(list) ? list : [])
+          )
+        })
+        .catch(() => undefined)
     }
     es.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data) as MonitoredMessageDto
         if (typeof raw?.id !== "number") return
-        setMessages((prev) => [raw, ...prev.filter((item) => item.id !== raw.id)].slice(0, MAX_ROWS))
+        // Поток общий для всех инстансов, панель показывает только свой.
+        if (instanceOf(raw) !== instance) return
+        setMessages((current) => mergeMessages(current, [raw]))
       } catch {
         // ignore keepalive / unparseable frames
       }
     }
-    // Служебные heartbeat-события игнорируем явно.
-    const handlePing = () => undefined
-    es.addEventListener("ping", handlePing)
-    es.onerror = () => {
-      hadError = true
-      setIsLiveConnected(false)
-    }
-
+    es.onerror = () => setIsLiveConnected(false)
     return () => {
-      es.removeEventListener("ping", handlePing)
+      active = false
       es.close()
     }
-  }, [catchUpMessages])
+  }, [instance, withDevice])
 
   const groupRows = React.useMemo(
-    () => buildGroupRows(groups, status?.groups ?? []),
-    [groups, status?.groups]
+    () => buildGroupRows(groups, status?.groups ?? [], instance),
+    [groups, status?.groups, instance]
   )
   const pollStale =
     status?.isRunning === true &&
@@ -296,7 +362,15 @@ export function ViberMonitorPanel() {
   })
 
   const visible = messages.filter((message) => {
-    if (sourceFilter !== "all" && String(message.conversationId) !== sourceFilter) return false
+    if (sourceFilter !== "all") {
+      const selectedGroup = groupRows.find((g) => String(g.conversationId) === sourceFilter)
+      const matchesId = String(message.conversationId) === sourceFilter
+      const matchesName =
+        selectedGroup &&
+        message.conversationName &&
+        selectedGroup.name.trim().toLowerCase() === message.conversationName.trim().toLowerCase()
+      if (!matchesId && !matchesName) return false
+    }
     if (phoneFilter === "yes" && !message.attachedPhone) return false
     if (phoneFilter === "no" && message.attachedPhone) return false
     if (mediaFilter === "yes" && !messageHasMedia(message)) return false
@@ -307,6 +381,11 @@ export function ViberMonitorPanel() {
       if (!haystack.includes(needle)) return false
     }
     return true
+  }).sort((a, b) => {
+    const timeA = new Date(a.date).getTime() || 0
+    const timeB = new Date(b.date).getTime() || 0
+    if (timeB !== timeA) return timeB - timeA
+    return b.id - a.id
   })
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
@@ -319,16 +398,24 @@ export function ViberMonitorPanel() {
     setPage(1)
   }, [sourceFilter, phoneFilter, mediaFilter, query])
 
-  const handleToggleGroup = async (conversationId: number, enabled: boolean) => {
+  const handleToggleGroup = async (
+    conversationId: number,
+    enabled: boolean,
+    groupKey: string | null = null
+  ) => {
     setTogglingId(conversationId)
     try {
+      // На enable инстанс и глобальный ключ идут телом: сервер сам подменит
+      // чужой локальный ID на тот, что реально есть на этом эмуляторе.
       const path = enabled
         ? `messages/monitor/groups/${conversationId}/enable`
-        : `messages/monitor/groups/${conversationId}/disable`
+        : withDevice(`messages/monitor/groups/${conversationId}/disable`)
       const next = await viberJson<MessageMonitorStatusDto>(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: enabled ? JSON.stringify({}) : undefined,
+        body: enabled
+          ? JSON.stringify({ deviceId: instance, ...(groupKey ? { groupKey } : {}) })
+          : undefined,
       })
       setStatus({
         ...next,
@@ -356,7 +443,7 @@ export function ViberMonitorPanel() {
         const next = await viberJson<MessageMonitorStatusDto>("messages/monitor/start", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: "{}",
+          body: JSON.stringify({ deviceId: instance }),
         })
         setStatus({ ...next, groups: next.groups ?? [], liveWatch: next.liveWatch ?? false })
         toast.success("Мониторинг запущен")
@@ -374,6 +461,7 @@ export function ViberMonitorPanel() {
     setExporting(true)
     try {
       const params = new URLSearchParams({ format, limit: "0" })
+      params.set("deviceId", instance)
       if (sourceFilter !== "all") params.set("conversationId", sourceFilter)
       if (phoneFilter === "yes") params.set("hasPhone", "true")
       if (phoneFilter === "no") params.set("hasPhone", "false")
@@ -407,7 +495,7 @@ export function ViberMonitorPanel() {
         <CardHeader className="pb-3">
           <CardTitle className="text-base">Группы на мониторинге</CardTitle>
           <CardDescription className="text-xs">
-            Включите группу — новые сообщения ловятся в момент записи в Viber. После рестарта эмулятора догоняем с сохранённого курсора.
+            Включите группу — новые сообщения фиксируются в момент поступления. После перезапуска сервиса чтение продолжается с сохранённого курсора.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -421,9 +509,14 @@ export function ViberMonitorPanel() {
               aria-label="Поиск группы"
             />
           </div>
+          {groupsError ? (
+            <p className="text-[11px] text-destructive">Инстанс недоступен: {groupsError}</p>
+          ) : null}
           <ScrollArea className="h-[min(28rem,60vh)] rounded-lg border">
             {loading && groupRows.length === 0 ? (
               <p className="p-4 text-xs text-muted-foreground">Загрузка групп…</p>
+            ) : groupRows.length === 0 ? (
+              <p className="p-4 text-xs text-muted-foreground">На инстансе нет групп.</p>
             ) : visibleGroups.length === 0 ? (
               <p className="p-4 text-xs text-muted-foreground">Группы не найдены.</p>
             ) : (
@@ -438,14 +531,23 @@ export function ViberMonitorPanel() {
                           ? ` · ${row.memberCount.toLocaleString("ru-RU")} уч.`
                           : ""}
                       </span>
+                      {row.missingOnDevice ? (
+                        <span className="block text-[11px] text-amber-600 dark:text-amber-400">
+                          {MISSING_ON_DEVICE_HINT}
+                        </span>
+                      ) : null}
                     </span>
                     {togglingId === row.conversationId ? (
                       <Loader2Icon className="size-4 shrink-0 animate-spin text-muted-foreground" />
                     ) : null}
                     <Switch
                       checked={row.enabled}
-                      disabled={togglingId === row.conversationId}
-                      onCheckedChange={(checked) => void handleToggleGroup(row.conversationId, checked)}
+                      disabled={
+                        togglingId === row.conversationId || (row.missingOnDevice && !row.enabled)
+                      }
+                      onCheckedChange={(checked) =>
+                        void handleToggleGroup(row.conversationId, checked, row.groupKey)
+                      }
                       aria-label={`${row.enabled ? "Выключить" : "Включить"} мониторинг ${row.name}`}
                     />
                   </li>
@@ -475,28 +577,28 @@ export function ViberMonitorPanel() {
                   {status?.liveWatch ? (
                     <Badge className="gap-1.5 bg-emerald-600 font-normal text-white hover:bg-emerald-600">
                       <span className="inline-block size-2 animate-pulse rounded-full bg-white" />
-                      Live SQLite
+                      Live поток
                     </Badge>
                   ) : (
                     <Badge variant="secondary" className="gap-1.5 font-normal">
                       <WifiOffIcon className="size-3" />
-                      Хук SQLite выключен
+                      Периодический опрос
                     </Badge>
                   )}
                   {isLiveConnected ? (
                     <Badge variant="outline" className="gap-1.5 font-normal">
                       <WifiIcon className="size-3" />
-                      SSE
+                      Онлайн поток
                     </Badge>
                   ) : (
                     <Badge variant="outline" className="gap-1.5 font-normal text-muted-foreground">
-                      Ожидание SSE
+                      Подключение...
                     </Badge>
                   )}
                   {status?.isRunning ? (
                     pollStale ? (
                       <Badge variant="destructive" className="font-normal">
-                        Нет связи с эмулятором
+                        Нет связи с устройством
                       </Badge>
                     ) : (
                       <Badge variant="outline" className="font-normal">
@@ -647,7 +749,7 @@ export function ViberMonitorPanel() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="w-[90px]">Время</TableHead>
+                    <TableHead className="w-[160px]">Дата и время</TableHead>
                     <TableHead className="min-w-[140px]">Группа</TableHead>
                     <TableHead className="min-w-[120px]">Автор</TableHead>
                     <TableHead className="min-w-[140px]">Телефон</TableHead>
@@ -666,7 +768,7 @@ export function ViberMonitorPanel() {
                   ) : (
                     pageRows.map((message) => (
                       <TableRow key={message.id}>
-                        <TableCell className="font-mono text-xs tabular-nums text-muted-foreground">
+                        <TableCell className="whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground">
                           {formatMsgTime(message.date)}
                         </TableCell>
                         <TableCell className="text-xs">

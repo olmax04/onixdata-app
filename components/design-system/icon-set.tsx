@@ -12,7 +12,6 @@ import {
   LockIcon,
   LogOutIcon,
   MailIcon,
-  MessageCircleIcon,
   MenuIcon,
   MoreHorizontalIcon,
   PauseIcon,
@@ -27,6 +26,7 @@ import {
   TrendingUpIcon,
   UploadIcon,
   UserIcon,
+  WaypointsIcon,
   XIcon,
   type LucideIcon,
 } from "lucide-react"
@@ -37,10 +37,10 @@ import { StatusDot } from "@/components/dashboard/badges"
 
 const icons: { icon: LucideIcon; name: string }[] = [
   { icon: LayoutDashboardIcon, name: "Обзор" },
-  { icon: MessageCircleIcon, name: "Группы Viber" },
+  { icon: WaypointsIcon, name: "Источники" },
   { icon: RadioIcon, name: "Мониторинг Viber" },
   { icon: SendIcon, name: "Рассылка Viber" },
-  { icon: DatabaseIcon, name: "База данных" },
+  { icon: DatabaseIcon, name: "Датасеты" },
   { icon: SettingsIcon, name: "Настройки" },
   { icon: MenuIcon, name: "Меню" },
   { icon: SearchIcon, name: "Поиск" },

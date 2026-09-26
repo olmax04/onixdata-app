@@ -9,12 +9,12 @@ const showcaseCopy: Record<string, { title: string; subtitle: string }> = {
   "/login": {
     title: "Все публичные данные — в одном рабочем месте.",
     subtitle:
-      "Viber и другие мессенджеры: сбор, мониторинг и рассылка из одного окна.",
+      "Telegram, WhatsApp и Discord: сбор, очистка и выгрузка датасетов.",
   },
   "/register": {
-    title: "Первый сбор — за пару минут.",
+    title: "Первый датасет — за пару минут.",
     subtitle:
-      "Подключите группы Viber, задайте ключевые слова и следите за потоком.",
+      "Подключите источники, задайте фильтры и выгружайте в CSV, JSON или Parquet.",
   },
   "/forgot-password": {
     title: "Доступ вернём быстро.",
@@ -27,22 +27,22 @@ const fallbackCopy = showcaseCopy["/login"]
 
 const navRows = [
   { id: "overview", width: "w-14", active: false },
-  { id: "viber", width: "w-10", active: true },
+  { id: "sources", width: "w-10", active: true },
   { id: "stream", width: "w-12", active: false },
-  { id: "broadcast", width: "w-9", active: false },
+  { id: "datasets", width: "w-9", active: false },
   { id: "settings", width: "w-11", active: false },
 ]
 
 const sourceRows = [
   {
-    platform: "Viber",
-    messages: "213 004",
+    platform: "Telegram",
+    messages: "128 450",
     delta: "+12%",
     dot: "bg-primary",
   },
   {
-    platform: "Telegram",
-    messages: "128 450",
+    platform: "Discord",
+    messages: "213 004",
     delta: "+8%",
     dot: "bg-primary/60",
   },
@@ -141,7 +141,7 @@ export function AuthShowcase() {
                       aria-hidden="true"
                     />
                     <span className="truncate text-[0.7rem] text-muted-foreground">
-                      Поиск по группам и сообщениям
+                      Поиск по источникам и датасетам
                     </span>
                   </div>
 
@@ -236,7 +236,7 @@ export function AuthShowcase() {
             <div className="auth-rise auth-rise-late absolute -bottom-8 -left-8 w-[11rem]">
               <div className="auth-float rounded-xl border border-white/10 bg-card p-3 text-card-foreground shadow-2xl shadow-black/40">
                 <p className="truncate font-mono text-[0.7rem] text-muted-foreground">
-                  viber_public_groups
+                  tg_public_chats
                 </p>
                 <div className="mt-2 flex items-end justify-between gap-3">
                   <p className="text-base font-semibold leading-none tabular-nums text-foreground">

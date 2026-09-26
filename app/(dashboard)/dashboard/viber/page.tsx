@@ -7,18 +7,34 @@ export const metadata: Metadata = {
   title: "Группы Viber",
 }
 
-export default function ViberParserPage() {
+interface ViberParserPageProps {
+  searchParams?: {
+    instance?: string
+    deviceId?: string
+  }
+}
+
+export default function ViberParserPage({ searchParams }: ViberParserPageProps) {
+  const deviceId = searchParams?.instance || searchParams?.deviceId
+  const title = deviceId ? `Группы: ${deviceId}` : "Группы Viber"
+
   return (
     <>
-      <Topbar title="Группы Viber" />
+      <Topbar title={title} />
 
       <main className="flex-1 space-y-6 p-4 sm:p-6">
-        <p className="text-sm text-muted-foreground">
-          Запускайте сессию, выбирайте группу и просматривайте декодированные
-          номера телефонов.
-        </p>
+        <div>
+          <h2 className="text-lg font-semibold">
+            {deviceId ? `Группы инстанса: ${deviceId}` : "Группы Viber"}
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            {deviceId
+              ? `Управление и сбор участников для инстанса ${deviceId}.`
+              : "Запускайте сессию, выбирайте группу и просматривайте декодированные номера телефонов."}
+          </p>
+        </div>
 
-        <ViberParserPanel />
+        <ViberParserPanel deviceId={deviceId} />
       </main>
     </>
   )

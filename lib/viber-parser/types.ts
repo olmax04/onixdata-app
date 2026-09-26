@@ -11,6 +11,7 @@ export type TaskStatus =
 export type TaskStepName =
   | "initializing"
   | "resolving_group"
+  | "loading_from_db"
   | "attaching_frida"
   | "navigating_viber"
   | "paging_participants"
@@ -21,36 +22,23 @@ export type TaskStepName =
   | "fetching_online_activity"
   | "exporting_results"
 
-/**
- * Ключи прогресса соответствуют тому, что реально пишет бэкенд
- * (participants-collector.flow.ts -> task.updateProgress).
- */
 export interface TaskProgress {
-  // resolving_group
-  groupName?: string
-  conversationId?: number
-  groupId?: string
-  // navigating_viber / paging_participants
-  headerTotal?: number | null
   pagesCount?: number
   currentOffset?: number
-  pageSize?: number
-  lastPage?: boolean
-  // waiting_numbers_sync
-  syncedPhoneNumbers?: number
-  stable?: boolean
-  // fetching_online_activity
-  total?: number
-  completed?: number
+  headerTotal?: number
+  savedCount?: number
+  participantsWithPhone?: number
+  participantsCount?: number
   onlineChecked?: number
   onlineTotal?: number
   [key: string]: unknown
 }
 
 export interface TaskStepDto {
-  step: TaskStepName | string
-  description?: string
+  step: string
+  description?: string | null
   startedAt: string
+  completedAt?: string | null
   durationMs?: number | null
   progress?: TaskProgress | null
 }
@@ -58,8 +46,6 @@ export interface TaskStepDto {
 export interface TaskCollectionResultDto {
   group: string
   conversationId: number
-  groupId?: string
-  headerTotal?: number | null
   pagesCount: number
   participantsCount: number
   participantsWithPhone: number
@@ -74,45 +60,35 @@ export interface TaskSummaryDto {
   groupName?: string | null
   conversationId?: number | null
   status: TaskStatus
-  /** Бэкенд всегда отдаёт объект шага (или null), строкой он не бывает. */
-  currentStep?: TaskStepDto | null
-  createdAt: string
-  startedAt?: string | null
+  currentStep?: string | TaskStepDto | null
+  error?: string | null
+  startedAt: string
   completedAt?: string | null
+  participantsCollected?: number | null
 }
 
 export interface TaskDetailDto extends TaskSummaryDto {
-  stepHistory: TaskStepDto[]
   progress?: TaskProgress | null
-  /** Текст ошибки приходит только в detail, в списке задач его нет. */
-  error?: string | null
+  stepHistory: TaskStepDto[]
   result?: TaskCollectionResultDto | null
 }
 
-/** Полезная нагрузка SSE-события задачи: GET /api/tasks/:id/events. */
-export interface TaskEvent {
-  taskId: string
-  status: TaskStatus
-  step?: TaskStepDto
-  progress?: TaskProgress
-  error?: string
-  timestamp: string
-}
-
-/** Консолидированный ответ GET /api/viber/status. */
 export interface ViberParserStatus {
   state: ViberParserState
+  /**
+   * Сервис сбора ответил и готов работать.
+   * Обрыв связи или таймаут — это НЕ false, а ошибка запроса:
+   * прокси в таком случае отвечает 502/504 и статус вообще не обновляется.
+   */
   isDriverActive: boolean
-  taskId: string | null
-  task: TaskDetailDto | null
-  tasks: TaskSummaryDto[]
-  currentStep: string | null
-  progress: TaskProgress | null
-  groupName: string | null
-  fetchedAt: string
+  taskId?: string | null
+  latestTaskStatus?: TaskStatus | null
+  currentStep?: string | null
+  progress?: TaskProgress | null
+  groupName?: string | null
+  /** Причина, по которой сервис ответил, но работать не может. */
+  error?: string | null
 }
-
-export type ParserConnectionState = "online" | "reconnecting" | "offline"
 
 export interface ViberActionResponse {
   message: string
@@ -125,13 +101,19 @@ export interface ViberErrorResponse {
 
 export interface ViberGroup {
   conversationId: number
-  groupId: number
+  /** Глобальный ключ группы Viber. У беседы без conversations.group_id его нет. */
+  groupId: string | number | null
   name: string | null
   conversationType: number
   memberCount: number
   messageCount?: number
   lastMessageDate?: string | null
   unreadCount?: number
+  /** Группа открыта на выбранном инстансе, а не только в базе/архиве. */
+  onDevice?: boolean
+  hasStoredData?: boolean
+  storedParticipantCount?: number
+  storedPhoneCount?: number
 }
 
 export interface ViberGroupsResponse {
@@ -169,7 +151,7 @@ export interface ViberMember {
 }
 
 export interface ViberMembersResponse {
-  conversationId: number
+  conversationId: number | string
   count: number
   members: ViberMember[]
 }
@@ -191,35 +173,46 @@ export interface DatabaseSyncResultDto {
   isCurrent: boolean
 }
 
-/** Поля строго по DecodeRequestDto бэкенда: любое лишнее поле даёт 400. */
 export interface ViberDecodeRequest {
   dryRun?: boolean
+  includeSelf?: boolean
   limit?: number
   restartApp?: boolean
   waitForSyncSeconds?: number
 }
 
 export interface DecodedParticipantItem {
-  id: number
+  infoId: number
   name: string | null
-  oldMemberId: string | null
   newMemberId: string
+  memberIdChanged: boolean
+  participantType: number
+  safeContact: number
+  previousMemberId: string | null
+  previousNumber: string | null
+  previousParticipantType: number | null
 }
 
 export interface ViberDecodeResponse {
-  success: boolean
-  message: string
   dryRun: boolean
-  totalRows: number
-  undecodedFound: number
+  read: number
   decodedCount: number
-  errorsCount: number
-  sampleDecoded?: DecodedParticipantItem[]
-  restartedApp?: boolean
+  updated: number
+  changedRows: number | null
+  skippedCount: number
+  invalidCount: number
+  backupPath: string | null
+  decoded: DecodedParticipantItem[]
 }
 
 export interface MonitoredGroupDto {
+  /** Инстанс эмулятора, на котором стоит группа. Старый API его не присылает. */
+  deviceId?: string
+  /** Резолвнутый ADB-серийник инстанса. */
+  serial?: string
   conversationId: number
+  /** Глобальный ключ группы Viber (conversations.group_id). */
+  groupKey?: string | null
   name: string | null
   enabled: boolean
   lastMessageId: number
@@ -227,6 +220,8 @@ export interface MonitoredGroupDto {
 
 export interface MessageMonitorStatusDto {
   isRunning: boolean
+  /** Инстанс, по которому отфильтрован ответ. */
+  deviceId?: string | null
   conversationId?: number | null
   groups?: MonitoredGroupDto[]
   liveWatch?: boolean
@@ -239,6 +234,8 @@ export interface MessageMonitorStatusDto {
 }
 
 export interface MonitoredMessageDto {
+  /** Инстанс, с которого прочитано сообщение. */
+  deviceId?: string
   id: number
   conversationId: number
   conversationName?: string | null

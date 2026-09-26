@@ -3,6 +3,8 @@
 import { toast } from "sonner"
 
 import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
+import { isSupabaseConfigured } from "@/lib/supabase/config"
 import { authPress } from "@/components/auth/auth-motion"
 import { Button } from "@/components/ui/button"
 
@@ -40,28 +42,35 @@ function GitHubIcon() {
   )
 }
 
-import * as React from "react"
-import { useAuth } from "@/lib/supabase/auth-context"
-
 export function OAuthButtons({ className }: { className?: string }) {
-  const { signInWithOAuth } = useAuth()
-  const [loadingProvider, setLoadingProvider] = React.useState<"google" | "github" | null>(null)
-
   const handleOAuth = async (provider: "google" | "github") => {
-    setLoadingProvider(provider)
+    const isConfigured = isSupabaseConfigured()
+
+    if (!isConfigured) {
+      toast("Демо: OAuth не подключён", {
+        description: `Вход через ${provider} (Supabase не настроен в .env.local).`,
+      })
+      return
+    }
+
     try {
-      const { error } = await signInWithOAuth(provider)
+      const supabase = createClient()
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider,
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      })
+
       if (error) {
-        toast.error(`Ошибка входа через ${provider}`, {
-          description: error.message || "Провайдер не настроен в Supabase.",
+        toast.error(`Ошибка авторизации через ${provider}`, {
+          description: error.message,
         })
       }
-    } catch (err: unknown) {
-      toast.error(`Ошибка OAuth`, {
-        description: err instanceof Error ? err.message : "Неизвестная ошибка",
+    } catch (err) {
+      toast.error("Ошибка OAuth", {
+        description: err instanceof Error ? err.message : String(err),
       })
-    } finally {
-      setLoadingProvider(null)
     }
   }
 
@@ -70,22 +79,20 @@ export function OAuthButtons({ className }: { className?: string }) {
       <Button
         type="button"
         variant="outline"
-        disabled={loadingProvider !== null}
         className={cn("h-11 bg-transparent hover:bg-accent", authPress)}
         onClick={() => handleOAuth("google")}
       >
         <GoogleIcon />
-        {loadingProvider === "google" ? "Подключение..." : "Google"}
+        Google
       </Button>
       <Button
         type="button"
         variant="outline"
-        disabled={loadingProvider !== null}
         className={cn("h-11 bg-transparent hover:bg-accent", authPress)}
         onClick={() => handleOAuth("github")}
       >
         <GitHubIcon />
-        {loadingProvider === "github" ? "Подключение..." : "GitHub"}
+        GitHub
       </Button>
     </div>
   )

@@ -16,7 +16,7 @@ export default function SettingsPage() {
         <div>
           <h2 className="text-lg font-semibold">Настройки рабочей области</h2>
           <p className="text-sm text-muted-foreground">
-            Интерфейс демонстрационный: ничего не сохраняется и не отправляется.
+            Профиль и пароль, доступ к API и уведомления.
           </p>
         </div>
 

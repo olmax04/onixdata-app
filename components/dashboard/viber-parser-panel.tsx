@@ -1,219 +1,946 @@
 "use client"
 
 import * as React from "react"
-import { DatabaseIcon, HistoryIcon, RadioIcon, UsersIcon } from "lucide-react"
+import Link from "next/link"
+import {
+  AlertCircleIcon,
+  CheckCircle2Icon,
+  CheckIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  CopyIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  ExternalLinkIcon,
+  HistoryIcon,
+  ImageIcon,
+  InfoIcon,
+  KeyRoundIcon,
+  Loader2Icon,
+  PlayIcon,
+  RadioIcon,
+  RefreshCwIcon,
+  SearchIcon,
+  ShieldIcon,
+  SparklesIcon,
+  SquareIcon,
+  Trash2Icon,
+  UsersIcon,
+  XIcon,
+} from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { CollectCard } from "@/components/dashboard/viber/collect-card"
-import { DatabaseTab } from "@/components/dashboard/viber/database-tab"
+import { Button } from "@/components/ui/button"
 import {
-  buildMemberRows,
-  buildMembersCsv,
-  buildMembersTxt,
-  collectUniquePhones,
-  downloadTextFile,
-  filterMembers,
-  groupLabel,
-  type MemberFilter,
-} from "@/components/dashboard/viber/format"
-import { HistoryTab } from "@/components/dashboard/viber/history-tab"
-import { MembersCard } from "@/components/dashboard/viber/members-card"
-import { MonitorTab, type MonitorGroupRow } from "@/components/dashboard/viber/monitor-tab"
-import { ParserHeader } from "@/components/dashboard/viber/parser-header"
-import { PipelineCard } from "@/components/dashboard/viber/pipeline-card"
-import { STEP_LABELS } from "@/components/dashboard/viber/pipeline"
-import { terminalToastOf } from "@/components/dashboard/viber/task-status"
-import { errorMessage, viberRequest } from "@/lib/viber-parser/client"
-import type { TerminalTaskInfo } from "@/lib/viber-parser/parser-sync"
-import { usePollLoop } from "@/lib/viber-parser/use-poll-loop"
-import { useViberParserSync } from "@/lib/viber-parser/use-parser-sync"
-import { useViberResource } from "@/lib/viber-parser/use-resource"
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Progress } from "@/components/ui/progress"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import type {
   DatabaseStatsDto,
   MessageMonitorStatusDto,
   MonitoredMessageDto,
   TaskDetailDto,
+  TaskStatus,
+  TaskSummaryDto,
   ViberDecodeResponse,
+  ViberGroup,
   ViberGroupsResponse,
+  ViberMember,
   ViberMembersResponse,
+  ViberParserStatus,
 } from "@/lib/viber-parser/types"
+import { messageHasMedia, messagePreviewText } from "@/lib/viber-parser/message-display"
+import {
+  applyTaskEvent,
+  buildStepTimeline,
+  describeTaskCompletion,
+  extractStepName,
+  isCompletionAnnounceable,
+  isTerminalTaskStatus,
+  mergeTaskDetail,
+  type TaskEventPayload,
+} from "@/lib/viber-parser/task-progress"
+import {
+  deriveConnectionState,
+  describeConnection,
+  INITIAL_CONNECTION,
+  markConnectionFailure,
+  markConnectionOk,
+  type ConnectionTracker,
+} from "@/lib/viber-parser/connection"
+import {
+  CONNECTION_TICK_MS,
+  FINALIZE_ATTEMPTS,
+  FINALIZE_RETRY_MS,
+  SSE_HEALTHY_MS,
+  SSE_MAX_ATTEMPTS,
+  SSE_RETRY_BASE_MS,
+  SSE_RETRY_MAX_MS,
+  STATUS_POLL_MS,
+  STATUS_REQUEST_TIMEOUT_MS,
+  TASK_DETAIL_REQUEST_TIMEOUT_MS,
+} from "@/lib/viber-parser/polling"
 
-const MONITOR_POLL_MS = 3000
 
-type PanelTab = "collect" | "database" | "history" | "monitor"
+/**
+ * Список участников бывает на тысячи строк: браузер не должен держать их все
+ * в DOM. Фильтры, экспорт и копирование по-прежнему работают над полным списком.
+ */
+/** Инстанс по умолчанию — тот, на который смотрит ADB_HOST/ADB_PORT. */
+const MONITOR_DEFAULT_DEVICE_ID = "default"
+/** Подпись строки реестра, которой нет на инстансе: включить её обратно нельзя. */
+const MONITOR_MISSING_ON_DEVICE_HINT = "Нет на инстансе — можно только снять с мониторинга"
+const MEMBERS_PAGE_SIZE_OPTIONS = [50, 100, 250] as const
+const DEFAULT_MEMBERS_PAGE_SIZE = 50
+const MEMBERS_PAGE_SIZE_STORAGE_KEY = "viber-members-page-size"
 
-interface MonitorSnapshot {
-  status: MessageMonitorStatusDto
-  messages: MonitoredMessageDto[]
+function readStoredMembersPageSize(): number | null {
+  try {
+    const raw = window.localStorage.getItem(MEMBERS_PAGE_SIZE_STORAGE_KEY)
+    const parsed = Number.parseInt(raw ?? "", 10)
+    return MEMBERS_PAGE_SIZE_OPTIONS.some((size) => size === parsed) ? parsed : null
+  } catch {
+    return null
+  }
 }
 
-export function ViberParserPanel() {
-  const [activeTab, setActiveTab] = React.useState<PanelTab>("collect")
+function storeMembersPageSize(size: number) {
+  try {
+    window.localStorage.setItem(MEMBERS_PAGE_SIZE_STORAGE_KEY, String(size))
+  } catch {
+    // приватный режим или заблокированное хранилище — размер просто не запомнится
+  }
+}
+
+/** Ручное обновление обязано обойти серверный кеш. */
+function withRefreshFlag(path: string, force?: boolean) {
+  if (!force) return path
+  return `${path}${path.includes("?") ? "&" : "?"}refresh=1`
+}
+
+const STEP_LABELS: Record<string, { title: string; desc: string }> = {
+  resolving_group: {
+    title: "Проверка группы",
+    desc: "Проверка выбранной группы",
+  },
+  loading_from_db: {
+    title: "Загрузка из базы",
+    desc: "Подгрузка участников и номеров из базы данных",
+  },
+  attaching_frida: {
+    title: "Подготовка сбора",
+    desc: "Настройка процесса обработки",
+  },
+  navigating_viber: {
+    title: "Открытие списка",
+    desc: "Подготовка списка участников",
+  },
+  paging_participants: {
+    title: "Получение участников",
+    desc: "Добавление найденных участников",
+  },
+  syncing_live_db: {
+    title: "Сохранение данных",
+    desc: "Фиксация полученных результатов",
+  },
+  restarting_viber: {
+    title: "Обновление данных",
+    desc: "Подготовка актуальной информации",
+  },
+  waiting_numbers_sync: {
+    title: "Проверка контактов",
+    desc: "Уточнение доступных номеров",
+  },
+  deduplicating_and_finalizing: {
+    title: "Обработка участников",
+    desc: "Обновление имен и удаление повторов",
+  },
+  fetching_online_activity: {
+    title: "Проверка активности",
+    desc: "Обновление статусов участников",
+  },
+  exporting_results: {
+    title: "Подготовка результатов",
+    desc: "Завершение сбора и формирование отчета",
+  },
+}
+
+const ALL_STEPS_ORDER = [
+  "resolving_group",
+  "attaching_frida",
+  "navigating_viber",
+  "paging_participants",
+  "syncing_live_db",
+  "restarting_viber",
+  "waiting_numbers_sync",
+  "deduplicating_and_finalizing",
+  "fetching_online_activity",
+  "exporting_results",
+]
+
+const DB_LOAD_STEPS_ORDER = [
+  "resolving_group",
+  "loading_from_db",
+  "syncing_live_db",
+  "restarting_viber",
+  "exporting_results",
+]
+
+const taskStatusBadge: Record<
+  TaskStatus,
+  { label: string; variant: "default" | "secondary" | "destructive" | "outline"; className?: string }
+> = {
+  ready: { label: "Завершено", variant: "outline", className: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10" },
+  running: { label: "В процессе", variant: "default", className: "bg-indigo-600 text-white animate-pulse" },
+  initializing: { label: "Подготовка", variant: "secondary" },
+  starting: { label: "Запуск", variant: "secondary" },
+  stopped: { label: "Остановлено", variant: "secondary", className: "text-amber-600 dark:text-amber-400 border-amber-500/30" },
+  error: { label: "Ошибка", variant: "destructive" },
+}
+
+class ViberApiError extends Error {
+  readonly status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = "ViberApiError"
+    this.status = status
+  }
+}
+
+function isNotFoundError(error: unknown) {
+  return error instanceof ViberApiError && error.status === 404
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === "AbortError"
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Неизвестная ошибка"
+}
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+/**
+ * Ограничивает запрос по времени, не смешиваясь с внешним AbortSignal:
+ * отмена извне даёт AbortError (её игнорируем), а таймаут — TimeoutError
+ * (его считаем неудачей опроса).
+ */
+function withRequestTimeout(signal: AbortSignal | undefined, timeoutMs: number | undefined) {
+  if (!timeoutMs) return { signal, cleanup: () => {} }
+
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => {
+    controller.abort(new DOMException("Превышено время ожидания ответа", "TimeoutError"))
+  }, timeoutMs)
+
+  const abortFromOuter = () => controller.abort(signal?.reason)
+  if (signal) {
+    if (signal.aborted) abortFromOuter()
+    else signal.addEventListener("abort", abortFromOuter, { once: true })
+  }
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      window.clearTimeout(timer)
+      signal?.removeEventListener("abort", abortFromOuter)
+    },
+  }
+}
+
+async function request<T>(
+  path: string,
+  options: {
+    method?: "GET" | "POST"
+    body?: unknown
+    signal?: AbortSignal
+    timeoutMs?: number
+  } = {}
+) {
+  const timeout = withRequestTimeout(options.signal, options.timeoutMs)
+  let response: Response
+  let text: string
+  // Таймаут снимаем только после чтения тела: медленный ответ тоже не должен висеть вечно
+  try {
+    response = await fetch(`/api/viber/${path}`, {
+      method: options.method ?? "GET",
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      cache: "no-store",
+      headers: options.body === undefined ? undefined : { "Content-Type": "application/json" },
+      signal: timeout.signal,
+    })
+    text = await response.text()
+  } finally {
+    timeout.cleanup()
+  }
+
+  let payload: unknown = null
+
+  if (text) {
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      payload = { error: text }
+    }
+  }
+
+  if (!response.ok) {
+    const apiError = payload as { error?: string; message?: string } | null
+    throw new ViberApiError(
+      apiError?.error || apiError?.message || `Ошибка запроса (${response.status})`,
+      response.status
+    )
+  }
+
+  return payload as T
+}
+
+function groupName(group: ViberGroup) {
+  return group.name || `Чат ${group.conversationId}`
+}
+
+function formatDuration(totalSeconds: number): string {
+  if (totalSeconds < 0) totalSeconds = 0
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+
+  if (hours > 0) return `${hours} ч ${minutes} мин ${seconds} сек`
+  if (minutes > 0) return `${minutes} мин ${seconds} сек`
+  return `${seconds} сек`
+}
+
+function formatDigitalTime(totalSeconds: number): string {
+  if (totalSeconds < 0) totalSeconds = 0
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const pad = (n: number) => n.toString().padStart(2, "0")
+  if (hours > 0) return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`
+  return `${pad(minutes)}:${pad(seconds)}`
+}
+
+function formatLastSeen(lastSeen?: string | null): string {
+  if (!lastSeen) return "—"
+  try {
+    const d = new Date(lastSeen)
+    if (isNaN(d.getTime())) return "—"
+    return d.toLocaleString("ru-RU", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  } catch {
+    return "—"
+  }
+}
+
+export interface ViberParserPanelProps {
+  deviceId?: string
+}
+
+export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
+  const [activeTab, setActiveTab] = React.useState<"collect" | "database" | "history" | "monitor">("collect")
+
+  const withDevice = React.useCallback(
+    (path: string) => {
+      if (!deviceId) return path
+      const separator = path.includes("?") ? "&" : "?"
+      return `${path}${separator}deviceId=${encodeURIComponent(deviceId)}`
+    },
+    [deviceId]
+  )
+
+  /**
+   * Мониторинг всегда называет инстанс, даже когда страница открыта без него:
+   * иначе список групп приходит с одного эмулятора, а лента — со всех сразу.
+   */
+  const instance = deviceId?.trim() || MONITOR_DEFAULT_DEVICE_ID
+  const withMonitorDevice = React.useCallback(
+    (path: string) => {
+      const separator = path.includes("?") ? "&" : "?"
+      return `${path}${separator}deviceId=${encodeURIComponent(instance)}`
+    },
+    [instance]
+  )
+
+  // Состояние парсера и активной задачи
+  const [status, setStatus] = React.useState<ViberParserStatus | null>(null)
+  const [statusLoading, setStatusLoading] = React.useState(true)
+  const [activeTaskDetail, setActiveTaskDetail] = React.useState<TaskDetailDto | null>(null)
+
+  // Связь с сервисом: обрыв опроса не равен ошибке сервиса
+  const [connection, setConnection] = React.useState<ConnectionTracker>(INITIAL_CONNECTION)
+  const [connectionNow, setConnectionNow] = React.useState(() => Date.now())
+  /** Растёт, когда финальные детали задачи получены запросом (а не выведены из SSE). */
+  const [finalFetchTick, setFinalFetchTick] = React.useState(0)
+
+  // Параметры сбора
+  const [groups, setGroups] = React.useState<ViberGroup[]>([])
+  const [groupsLoading, setGroupsLoading] = React.useState(true)
+  const [groupsError, setGroupsError] = React.useState<string | null>(null)
   const [selectedGroupId, setSelectedGroupId] = React.useState<string | null>(null)
   const [restartAppAfterCollect, setRestartAppAfterCollect] = React.useState(true)
   const [isStartingCollect, setIsStartingCollect] = React.useState(false)
+  const [isFastLoading, setIsFastLoading] = React.useState(false)
   const [isStoppingTask, setIsStoppingTask] = React.useState(false)
+
+  // Участники
+  const [members, setMembers] = React.useState<ViberMembersResponse | null>(null)
+  const [membersLoading, setMembersLoading] = React.useState(false)
+  const [membersError, setMembersError] = React.useState<string | null>(null)
+  const [memberSearchQuery, setMemberSearchQuery] = React.useState("")
+  const [memberRoleFilter, setMemberRoleFilter] = React.useState<"all" | "decoded" | "undecoded" | "admins">("all")
+  const [hideDuplicates, setHideDuplicates] = React.useState(true)
+  const [membersPage, setMembersPage] = React.useState(1)
+  const [membersPageSize, setMembersPageSize] = React.useState(DEFAULT_MEMBERS_PAGE_SIZE)
+
+  // База данных
+  const [dbStats, setDbStats] = React.useState<DatabaseStatsDto | null>(null)
+  const [dbStatsLoading, setDbStatsLoading] = React.useState(false)
   const [isSyncingDb, setIsSyncingDb] = React.useState(false)
   const [isDecodingDb, setIsDecodingDb] = React.useState(false)
   const [lastDecodeResult, setLastDecodeResult] = React.useState<ViberDecodeResponse | null>(null)
-  const [memberSearchQuery, setMemberSearchQuery] = React.useState("")
-  const [memberFilter, setMemberFilter] = React.useState<MemberFilter>("all")
-  const [hideDuplicates, setHideDuplicates] = React.useState(true)
+
+  // История задач
+  const [tasks, setTasks] = React.useState<TaskSummaryDto[]>([])
+  const [tasksLoading, setTasksLoading] = React.useState(false)
+  const [selectedHistoryTask, setSelectedHistoryTask] = React.useState<TaskDetailDto | null>(null)
+  const [historyTaskModalOpen, setHistoryTaskModalOpen] = React.useState(false)
+
+  // Мониторинг сообщений
+  const [monitorStatus, setMonitorStatus] = React.useState<MessageMonitorStatusDto | null>(null)
+  const [monitoredMessages, setMonitoredMessages] = React.useState<MonitoredMessageDto[]>([])
+  const [monitorLoading, setMonitorLoading] = React.useState(false)
   const [monitorToggling, setMonitorToggling] = React.useState(false)
   const [togglingMonitorGroupId, setTogglingMonitorGroupId] = React.useState<number | null>(null)
 
-  const groupsResource = useViberResource<ViberGroupsResponse>(
-    (signal) => viberRequest<ViberGroupsResponse>("groups", { signal }),
-    { key: "groups" }
-  )
+  // Идентификатор отслеживаемой задачи держим в ref, чтобы цикл опроса
+  // не перезапускался на каждое обновление деталей.
+  const trackedTaskIdRef = React.useRef<string | null>(null)
+  /** Задача, которая актуальна прямо сейчас: снимки других задач игнорируем. */
+  const desiredTaskIdRef = React.useRef<string | null>(null)
+  const loadedDetailIdRef = React.useRef<string | null>(null)
+  /** Задача, карточку которой пользователь скрыл кнопкой «Скрыть». */
+  const hiddenTaskIdRef = React.useRef<string | null>(null)
+  const selectedGroupIdRef = React.useRef<string | null>(null)
+  const detailTaskIdRef = React.useRef<string | null>(null)
+  const detailAbortRef = React.useRef<AbortController | null>(null)
+  /** Задачи, для которых финальные детали уже получены ЗАПРОСОМ (не выведены из SSE). */
+  const finalizedTasksRef = React.useRef<Set<string>>(new Set())
+  const finalizingTasksRef = React.useRef<Set<string>>(new Set())
+  const seenRunningTasksRef = React.useRef<Set<string>>(new Set())
+  const reactedTasksRef = React.useRef<Set<string>>(new Set())
+  const mountedRef = React.useRef(true)
+  /**
+   * Отмена дотягивания финальных деталей живёт на уровне компонента.
+   * К жизненному циклу SSE-эффекта её привязывать нельзя: этот эффект
+   * демонтируется ровно в тот момент, когда дотягивание и запускается
+   * (задача стала терминальной), и цикл повторов умирал, не начавшись.
+   */
+  const finalizeAbortRef = React.useRef<AbortController | null>(null)
 
-  const membersResource = useViberResource<ViberMembersResponse>(
-    (signal) =>
-      viberRequest<ViberMembersResponse>(`groups/${selectedGroupId}/members`, { signal }),
-    { key: selectedGroupId, enabled: !!selectedGroupId }
-  )
-
-  const dbStatsResource = useViberResource<DatabaseStatsDto>(
-    (signal) => viberRequest<DatabaseStatsDto>("database/stats", { signal }),
-    { key: "database-stats" }
-  )
-
-  const monitorResource = useViberResource<MonitorSnapshot>(
-    async (signal) => {
-      const [status, list] = await Promise.all([
-        viberRequest<MessageMonitorStatusDto>("messages/monitor/status", { signal }),
-        viberRequest<MonitoredMessageDto[]>("messages/monitored?limit=15", { signal }),
-      ])
-      return {
-        status: { ...status, groups: status.groups ?? [], liveWatch: status.liveWatch ?? false },
-        messages: Array.isArray(list) ? list : [],
-      }
-    },
-    { key: "monitor" }
-  )
-
-  const groups = React.useMemo(() => groupsResource.data?.groups ?? [], [groupsResource.data])
-  const members = membersResource.data
-  const monitorStatus = monitorResource.data?.status ?? null
-  const monitoredMessages = React.useMemo(
-    () => monitorResource.data?.messages ?? [],
-    [monitorResource.data]
-  )
-
-  const reloadGroups = groupsResource.reload
-  const reloadMembers = membersResource.reload
-  const reloadDbStats = dbStatsResource.reload
-  const reloadMonitor = monitorResource.reload
-
-  const handleTerminal = React.useCallback(
-    (info: TerminalTaskInfo) => {
-      const { kind, title, description } = terminalToastOf(info)
-      const options = description ? { description } : undefined
-      if (kind === "success") toast.success(title, options)
-      else if (kind === "info") toast.info(title, options)
-      else toast.error(title, options)
-
-      void reloadGroups()
-      void reloadMembers()
-      void reloadDbStats()
-    },
-    [reloadGroups, reloadMembers, reloadDbStats]
-  )
-
-  // Задачи живут в памяти бэкенда: после его перезапуска и задача, и история исчезают.
-  const handleTaskLost = React.useCallback(() => {
-    toast.warning("Бэкенд перезапущен: активная задача и история потеряны", {
-      description: "Карточка ниже — последнее известное состояние, обновляться она уже не будет.",
-    })
+  const finalizeSignal = React.useCallback(() => {
+    if (!finalizeAbortRef.current) finalizeAbortRef.current = new AbortController()
+    return finalizeAbortRef.current.signal
   }, [])
 
-  const {
-    status,
-    task,
-    tasks,
-    connection,
-    isTaskRunning,
-    isTaskLost,
-    consecutiveFailures,
-    lastError,
-    initialLoadDone,
-    refresh,
-    startCollect,
-    stopTask,
-    dismissTask,
-  } = useViberParserSync({ onTerminal: handleTerminal, onTaskLost: handleTaskLost })
-
-  // Первая доступная группа выбирается автоматически, ручной выбор сохраняется.
   React.useEffect(() => {
-    if (groups.length === 0) return
-    setSelectedGroupId((current) => {
-      if (current && groups.some((group) => String(group.conversationId) === current)) {
-        return current
-      }
-      return String(groups[0]!.conversationId)
-    })
-  }, [groups])
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      detailAbortRef.current?.abort()
+      finalizeAbortRef.current?.abort()
+    }
+  }, [])
 
-  // Вкладка «Монитор» опрашивается, только пока она открыта и страница видима.
-  // Следующий запрос стартует после ответа предыдущего: медленный бэкенд не должен
-  // отменять сам себя и оставлять спиннер висеть.
-  usePollLoop({
-    enabled: activeTab === "monitor",
-    intervalMs: MONITOR_POLL_MS,
-    onTick: reloadMonitor,
-  })
+  /** Задачи на бэкенде больше нет (рестарт сервиса, реестр в памяти). */
+  const clearTrackedTask = React.useCallback(() => {
+    trackedTaskIdRef.current = null
+    desiredTaskIdRef.current = null
+    loadedDetailIdRef.current = null
+    hiddenTaskIdRef.current = null
+    setActiveTaskDetail(null)
+  }, [])
+
+  const applyDetail = React.useCallback((detail: TaskDetailDto) => {
+    if (!mountedRef.current) return
+    // Поздний ответ по уже неактуальной задаче не должен подменять текущую
+    if (desiredTaskIdRef.current && desiredTaskIdRef.current !== detail.id) return
+
+    // Учёт ведём всегда, даже для скрытой карточки: иначе задача никогда не
+    // будет считаться дотянутой и фоновый опрос продолжит дёргать её вечно.
+    trackedTaskIdRef.current = detail.id
+    loadedDetailIdRef.current = detail.id
+    if (isTerminalTaskStatus(detail.status)) {
+      finalizedTasksRef.current.add(detail.id)
+      setFinalFetchTick((tick) => tick + 1)
+    } else {
+      seenRunningTasksRef.current.add(detail.id)
+    }
+
+    // На экран скрытую пользователем задачу не возвращаем
+    if (hiddenTaskIdRef.current === detail.id) return
+    setActiveTaskDetail((prev) => mergeTaskDetail(prev, detail, desiredTaskIdRef.current))
+  }, [])
+
+  // 1a. Детали задачи: единственный источник полной истории шагов
+  const fetchTaskDetail = React.useCallback(
+    async (taskId: string, signal?: AbortSignal) => {
+      const detail = await request<TaskDetailDto>(`tasks/${taskId}`, {
+        signal,
+        timeoutMs: TASK_DETAIL_REQUEST_TIMEOUT_MS,
+      })
+      applyDetail(detail)
+      return detail
+    },
+    [applyDetail]
+  )
+
+  const refreshTaskDetailQuiet = React.useCallback(
+    async (taskId: string) => {
+      if (detailTaskIdRef.current) {
+        // По той же задаче запрос уже летит — второй не нужен;
+        // по другой — старый ответ уже неинтересен, отменяем его.
+        if (detailTaskIdRef.current === taskId) return
+        detailAbortRef.current?.abort()
+      }
+
+      const controller = new AbortController()
+      detailAbortRef.current = controller
+      detailTaskIdRef.current = taskId
+      try {
+        await fetchTaskDetail(taskId, controller.signal)
+      } catch (error) {
+        if (isNotFoundError(error) && trackedTaskIdRef.current === taskId) {
+          // Задача исчезла (рестарт сервиса) — перестаём её опрашивать
+          clearTrackedTask()
+        }
+        // Иначе детали дотянем следующим опросом, последнее состояние сохраняем
+      } finally {
+        if (detailAbortRef.current === controller) {
+          detailAbortRef.current = null
+          detailTaskIdRef.current = null
+        }
+      }
+    },
+    [clearTrackedTask, fetchTaskDetail]
+  )
+
+  // 1. Опрос статуса сессии
+  const refreshStatus = React.useCallback(
+    async (background = false, signal?: AbortSignal) => {
+      if (!background) setStatusLoading(true)
+      // Снимок отслеживаемой задачи до запроса: пока ответ идёт, пользователь
+      // мог запустить сбор, и устаревший ответ не должен его стереть.
+      const desiredBefore = desiredTaskIdRef.current
+      let nextStatus: ViberParserStatus | null = null
+      try {
+        const received = await request<ViberParserStatus>(withDevice("status"), {
+          signal,
+          timeoutMs: STATUS_REQUEST_TIMEOUT_MS,
+        })
+        setConnection(markConnectionOk(Date.now()))
+        setConnectionNow(Date.now())
+
+        if (desiredTaskIdRef.current !== desiredBefore) {
+          // Ответ относится к состоянию «до» смены задачи. Учёт задачи не трогаем,
+          // но здоровье сервиса в нём актуально — иначе панель ещё цикл показывает
+          // «выполняется» для задачи, которой уже нет на экране.
+          nextStatus = null
+          setStatus((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  state: received.state,
+                  isDriverActive: received.isDriverActive,
+                  error: received.error ?? null,
+                }
+              : prev
+          )
+        } else {
+          nextStatus = received
+          setStatus(received)
+          if (received.taskId) {
+            trackedTaskIdRef.current = received.taskId
+            desiredTaskIdRef.current = received.taskId
+            if (!isTerminalTaskStatus(received.latestTaskStatus ?? null)) {
+              seenRunningTasksRef.current.add(received.taskId)
+            }
+          } else if (trackedTaskIdRef.current) {
+            // Сервис отвечает, но задач у него нет — реестр обнулился (рестарт API)
+            clearTrackedTask()
+          }
+        }
+      } catch (error) {
+        // Обрыв или таймаут: статус не трогаем, отмечаем потерю связи
+        if (!isAbortError(error)) {
+          const message = errorMessage(error)
+          setConnection((prev) => markConnectionFailure(prev, message))
+          setConnectionNow(Date.now())
+        }
+      } finally {
+        if (!background && !signal?.aborted) setStatusLoading(false)
+      }
+
+      // Детали обновляем даже если статус не пришёл — иначе прогресс
+      // этапов замирает навсегда после первой же неудачи опроса.
+      const targetTaskId = nextStatus?.taskId || trackedTaskIdRef.current
+      if (!targetTaskId) return
+
+      // Завершённую и уже дотянутую задачу нет смысла перезапрашивать
+      const backendTerminal = isTerminalTaskStatus(nextStatus?.latestTaskStatus ?? null)
+      const alreadyFinalized = finalizedTasksRef.current.has(targetTaskId)
+      if (background && alreadyFinalized && (backendTerminal || nextStatus === null)) return
+
+      if (background) {
+        void refreshTaskDetailQuiet(targetTaskId)
+      } else {
+        await refreshTaskDetailQuiet(targetTaskId)
+      }
+    },
+    [clearTrackedTask, refreshTaskDetailQuiet, withDevice]
+  )
+
+  // 2. Загрузка групп
+  const refreshGroups = React.useCallback(async (signal?: AbortSignal, options: { force?: boolean } = {}) => {
+    setGroupsLoading(true)
+    try {
+      // Инстанс работает только с группами, открытыми на его эмуляторе: собрать
+      // участников или включить мониторинг для архивной записи нельзя. Общая
+      // страница без инстанса по-прежнему показывает полный список с архивом.
+      const path = deviceId ? "groups?onDevice=true" : "groups"
+      const response = await request<ViberGroupsResponse>(
+        withDevice(withRefreshFlag(path, options.force)),
+        { signal }
+      )
+      setGroups(response.groups)
+      setGroupsError(null)
+      setSelectedGroupId((current) => {
+        if (current && response.groups.some((group) => String(group.conversationId) === current)) {
+          return current
+        }
+        return response.groups[0] ? String(response.groups[0].conversationId) : null
+      })
+    } catch (error) {
+      if (!isAbortError(error)) {
+        setGroups([])
+        setGroupsError(errorMessage(error))
+        toast.error("Не удалось загрузить группы", {
+          description: errorMessage(error),
+        })
+      }
+    } finally {
+      if (!signal?.aborted) setGroupsLoading(false)
+    }
+  }, [deviceId, withDevice])
+
+  // 3. Загрузка участников группы
+  const refreshMembers = React.useCallback(async (
+    groupId: string,
+    signal?: AbortSignal,
+    options: { force?: boolean } = {}
+  ) => {
+    setMembersLoading(true)
+    setMembersError(null)
+    try {
+      const response = await request<ViberMembersResponse>(
+        withDevice(withRefreshFlag(`groups/${groupId}/members`, options.force)),
+        { signal }
+      )
+      setMembers(response)
+    } catch (error) {
+      if (!isAbortError(error)) {
+        setMembers(null)
+        setMembersError(errorMessage(error))
+      }
+    } finally {
+      if (!signal?.aborted) setMembersLoading(false)
+    }
+  }, [withDevice])
+
+  // 4. Загрузка статистики базы данных
+  const refreshDbStats = React.useCallback(async (signal?: AbortSignal, options: { force?: boolean } = {}) => {
+    setDbStatsLoading(true)
+    try {
+      const stats = await request<DatabaseStatsDto>(
+        withDevice(withRefreshFlag("database/stats", options.force)),
+        { signal }
+      )
+      setDbStats(stats)
+    } catch {
+      // ignore
+    } finally {
+      if (!signal?.aborted) setDbStatsLoading(false)
+    }
+  }, [withDevice])
+
+  // 5. Загрузка истории задач
+  const refreshTasks = React.useCallback(async (signal?: AbortSignal) => {
+    setTasksLoading(true)
+    try {
+      const list = await request<TaskSummaryDto[]>(withDevice("tasks"), { signal })
+      setTasks(list)
+    } catch {
+      // ignore
+    } finally {
+      if (!signal?.aborted) setTasksLoading(false)
+    }
+  }, [withDevice])
+
+  // 6. Загрузка статуса мониторинга сообщений
+  const refreshMonitor = React.useCallback(async (signal?: AbortSignal) => {
+    setMonitorLoading(true)
+    try {
+      const [mStatus, mList] = await Promise.all([
+        request<MessageMonitorStatusDto>(withMonitorDevice("messages/monitor/status"), { signal }),
+        request<MonitoredMessageDto[]>(withMonitorDevice("messages/monitored?limit=15"), { signal }),
+      ])
+      setMonitorStatus({
+        ...mStatus,
+        groups: mStatus.groups ?? [],
+        liveWatch: mStatus.liveWatch ?? false,
+      })
+      setMonitoredMessages(mList)
+    } catch {
+      // ignore
+    } finally {
+      if (!signal?.aborted) setMonitorLoading(false)
+    }
+  }, [withMonitorDevice])
+
+  // 7. Дотягивание финального состояния задачи.
+  // Как только задача перешла в терминальный статус, повторяем запрос деталей,
+  // пока не получим её финальный stepHistory — иначе на экране остаются
+  // только первые шаги.
+  const ensureFinalDetail = React.useCallback(
+    async (taskId: string, signal?: AbortSignal) => {
+      if (finalizedTasksRef.current.has(taskId)) return
+      if (finalizingTasksRef.current.has(taskId)) return
+      finalizingTasksRef.current.add(taskId)
+      try {
+        for (let attempt = 0; attempt < FINALIZE_ATTEMPTS; attempt += 1) {
+          if (signal?.aborted || !mountedRef.current) return
+          try {
+            const detail = await fetchTaskDetail(taskId, signal)
+            if (isTerminalTaskStatus(detail.status)) return
+          } catch (error) {
+            if (isAbortError(error)) return
+            if (isNotFoundError(error)) {
+              if (trackedTaskIdRef.current === taskId) clearTrackedTask()
+              return
+            }
+          }
+          await delay(FINALIZE_RETRY_MS * (attempt + 1))
+        }
+      } finally {
+        finalizingTasksRef.current.delete(taskId)
+      }
+    },
+    [clearTrackedTask, fetchTaskDetail]
+  )
+
+  // Периодический опрос: цикл не должен умирать ни при какой ошибке
+  React.useEffect(() => {
+    let cancelled = false
+    let timeoutId: number | undefined
+    const poll = async () => {
+      try {
+        await refreshStatus(true)
+      } catch {
+        // refreshStatus и так не бросает, но цикл опроса обрывать нельзя
+      }
+      if (!cancelled) {
+        timeoutId = window.setTimeout(poll, STATUS_POLL_MS)
+      }
+    }
+    void refreshStatus(false)
+    timeoutId = window.setTimeout(poll, STATUS_POLL_MS)
+    return () => {
+      cancelled = true
+      if (timeoutId !== undefined) window.clearTimeout(timeoutId)
+    }
+  }, [refreshStatus])
+
+  // Пересчёт «свежести» связи между опросами
+  React.useEffect(() => {
+    const intervalId = window.setInterval(() => setConnectionNow(Date.now()), CONNECTION_TICK_MS)
+    return () => window.clearInterval(intervalId)
+  }, [])
+
+  // Инициализация при монтировании
+  React.useEffect(() => {
+    void refreshGroups()
+    void refreshDbStats()
+    void refreshTasks()
+    void refreshMonitor()
+  }, [refreshGroups, refreshDbStats, refreshTasks, refreshMonitor])
+
+  // Загрузка участников при выборе группы
+  React.useEffect(() => {
+    selectedGroupIdRef.current = selectedGroupId
+    if (!selectedGroupId) return
+    void refreshMembers(selectedGroupId)
+  }, [selectedGroupId, refreshMembers])
+
+  const trackedTaskId = status?.taskId ?? activeTaskDetail?.id ?? null
+  const trackedTaskTerminal =
+    !!trackedTaskId &&
+    ((activeTaskDetail?.id === trackedTaskId && isTerminalTaskStatus(activeTaskDetail?.status)) ||
+      (status?.taskId === trackedTaskId && isTerminalTaskStatus(status?.latestTaskStatus ?? null)))
+
+  // SSE стриминг для активной задачи: обрыв потока не должен «замораживать»
+  // прогресс — переподключаемся с backoff и перезапрашиваем детали.
+  React.useEffect(() => {
+    if (!trackedTaskId || trackedTaskTerminal) return
+
+    let stopped = false
+    let attempts = 0
+    // 0 = соединение так и не открылось; проставляется только в onopen
+    let openedAt = 0
+    let retryTimer: number | undefined
+    let source: EventSource | null = null
+
+    const connect = () => {
+      if (stopped) return
+      const eventSource = new EventSource(`/api/viber/tasks/${trackedTaskId}/events`)
+      source = eventSource
+      openedAt = 0
+
+      eventSource.onopen = () => {
+        openedAt = Date.now()
+      }
+
+      eventSource.onmessage = (event) => {
+        // Успешным считаем поток, который реально что-то прислал: открыться и
+        // тут же закрыться (например, задачи уже нет) — это не успех.
+        attempts = 0
+        try {
+          const payload = JSON.parse(event.data) as TaskEventPayload
+          if (loadedDetailIdRef.current === trackedTaskId) {
+            setActiveTaskDetail((prev) => applyTaskEvent(prev, payload))
+          } else {
+            // Событие пришло раньше, чем детали задачи — забираем их запросом
+            void refreshTaskDetailQuiet(trackedTaskId)
+          }
+          if (payload.status && !isTerminalTaskStatus(payload.status)) {
+            seenRunningTasksRef.current.add(trackedTaskId)
+          }
+          if (isTerminalTaskStatus(payload.status ?? null)) {
+            void ensureFinalDetail(trackedTaskId, finalizeSignal())
+          }
+        } catch {
+          // некорректный JSON игнорируем
+        }
+      }
+
+      eventSource.onerror = () => {
+        eventSource.close()
+        if (stopped) return
+        // Долгий шаг (например, ожидание сетевой синхронизации) не присылает
+        // событий минутами: прожившее достаточно соединение считаем рабочим,
+        // иначе idle-таймаут тихо съест все попытки.
+        if (openedAt > 0 && Date.now() - openedAt >= SSE_HEALTHY_MS) attempts = 0
+        // Поток мог оборваться, а мог закончиться вместе с задачей —
+        // в обоих случаях сначала перезапрашиваем актуальные детали.
+        void refreshTaskDetailQuiet(trackedTaskId)
+        attempts += 1
+        if (attempts > SSE_MAX_ATTEMPTS) return
+        const backoff = Math.min(SSE_RETRY_BASE_MS * 2 ** (attempts - 1), SSE_RETRY_MAX_MS)
+        retryTimer = window.setTimeout(connect, backoff)
+      }
+    }
+
+    connect()
+
+    return () => {
+      stopped = true
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer)
+      source?.close()
+    }
+  }, [trackedTaskId, trackedTaskTerminal, refreshTaskDetailQuiet, ensureFinalDetail, finalizeSignal])
+
+  // Задача завершилась — обязательно дотягиваем финальный stepHistory
+  React.useEffect(() => {
+    if (!trackedTaskId || !trackedTaskTerminal) return
+    void ensureFinalDetail(trackedTaskId, finalizeSignal())
+  }, [trackedTaskId, trackedTaskTerminal, ensureFinalDetail, finalizeSignal])
+
+  // Реакция на завершение задачи — ровно один раз и только по снимку,
+  // в котором уже есть итог: у снимка, собранного из событий SSE, result пустой.
+  React.useEffect(() => {
+    const detail = activeTaskDetail
+    if (!detail) return
+    if (reactedTasksRef.current.has(detail.id)) return
+    if (!isCompletionAnnounceable(detail, finalizedTasksRef.current.has(detail.id))) return
+    reactedTasksRef.current.add(detail.id)
+
+    if (seenRunningTasksRef.current.delete(detail.id)) {
+      const notice = describeTaskCompletion(detail)
+      if (notice) {
+        const options = notice.description ? { description: notice.description } : undefined
+        if (notice.kind === "success") toast.success(notice.title, options)
+        else if (notice.kind === "info") toast.info(notice.title, options)
+        else toast.error(notice.title, options)
+      }
+    }
+
+    // Данные только что изменились — читаем мимо серверного кеша
+    void refreshTasks()
+    void refreshGroups(undefined, { force: true })
+    if (selectedGroupIdRef.current) {
+      void refreshMembers(selectedGroupIdRef.current, undefined, { force: true })
+    }
+  }, [activeTaskDetail, finalFetchTick, refreshGroups, refreshMembers, refreshTasks])
 
   const selectedGroup = React.useMemo(
-    () => groups.find((group) => String(group.conversationId) === selectedGroupId) ?? null,
+    () => groups.find((g) => String(g.conversationId) === selectedGroupId) ?? null,
     [groups, selectedGroupId]
   )
 
-  const filteredMembers = React.useMemo(
-    () =>
-      filterMembers(members?.members ?? [], {
-        query: memberSearchQuery,
-        filter: memberFilter,
-        hideDuplicates,
-      }),
-    [members, memberSearchQuery, memberFilter, hideDuplicates]
-  )
-
-  const monitorGroupRows = React.useMemo<MonitorGroupRow[]>(() => {
-    const monitoredById = new Map(
-      (monitorStatus?.groups ?? []).map((item) => [item.conversationId, item])
-    )
-    const rows: MonitorGroupRow[] = groups
-      .filter((group) => group.conversationType !== 0)
-      .map((group) => ({
-        conversationId: group.conversationId,
-        name: groupLabel(group),
-        enabled: monitoredById.get(group.conversationId)?.enabled ?? false,
-      }))
-
-    const seen = new Set(rows.map((row) => row.conversationId))
-    for (const item of monitorStatus?.groups ?? []) {
-      if (seen.has(item.conversationId)) continue
-      rows.push({
-        conversationId: item.conversationId,
-        name: item.name || `Группа ${item.conversationId}`,
-        enabled: item.enabled,
-      })
-    }
-
-    return rows.sort(
-      (a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name, "ru")
-    )
-  }, [groups, monitorStatus?.groups])
-
-  const currentStepKey = task?.currentStep?.step ?? status?.currentStep ?? ""
-  const currentStepLabel =
-    STEP_LABELS[currentStepKey]?.title ||
-    task?.currentStep?.description ||
-    currentStepKey ||
-    "Выполняется"
-
+  // Запуск сбора участников
   const handleStartCollect = async () => {
     if (!selectedGroup) {
       toast.error("Выберите группу для сбора участников")
@@ -223,316 +950,1781 @@ export function ViberParserPanel() {
     setIsStartingCollect(true)
     try {
       const target = selectedGroup.name || String(selectedGroup.conversationId)
-      const { taskId } = await startCollect({
-        group: target,
-        restartApp: restartAppAfterCollect,
-        allowPartial: true,
+
+      const result = await request<{ taskId: string; message: string }>("participants/collect", {
+        method: "POST",
+        body: {
+          group: target,
+          restartApp: restartAppAfterCollect,
+          allowPartial: true,
+          deviceId: deviceId || undefined,
+        },
       })
+
+      if (result.taskId) {
+        // С этого момента актуальна новая задача: поздние ответы по старой игнорируем
+        desiredTaskIdRef.current = result.taskId
+        trackedTaskIdRef.current = result.taskId
+        loadedDetailIdRef.current = null
+        hiddenTaskIdRef.current = null
+        seenRunningTasksRef.current.add(result.taskId)
+        setActiveTaskDetail(null)
+      }
+
       toast.success("Сбор запущен", {
-        description: taskId
-          ? `Задача ${taskId} зарегистрирована. Наблюдайте прогресс на шагах ниже.`
-          : "Наблюдайте прогресс на шагах ниже.",
+        description: `Задача ${result.taskId} зарегистрирована. Наблюдайте прогресс на шагах ниже.`,
       })
-    } catch (error) {
-      toast.error("Не удалось запустить сбор", { description: errorMessage(error) })
+
+      await refreshStatus(true)
+      await refreshTasks()
+    } catch (err) {
+      toast.error("Не удалось запустить сбор", { description: errorMessage(err) })
     } finally {
       setIsStartingCollect(false)
     }
   }
 
+  // Быстрая подгрузка участников из базы данных
+  const handleFastLoadFromDb = async () => {
+    if (!selectedGroup) {
+      toast.error("Выберите группу для загрузки участников")
+      return
+    }
+
+    setIsFastLoading(true)
+    try {
+      const target = selectedGroup.name || String(selectedGroup.conversationId)
+
+      const result = await request<{ taskId: string; message: string }>("participants/load-from-db", {
+        method: "POST",
+        body: {
+          group: target,
+          restartApp: restartAppAfterCollect,
+          allowPartial: true,
+          fromDatabaseOnly: true,
+          deviceId: deviceId || undefined,
+        },
+      })
+
+      if (result.taskId) {
+        desiredTaskIdRef.current = result.taskId
+        trackedTaskIdRef.current = result.taskId
+        loadedDetailIdRef.current = null
+        hiddenTaskIdRef.current = null
+        seenRunningTasksRef.current.add(result.taskId)
+        setActiveTaskDetail(null)
+      }
+
+      toast.success("Загрузка из базы запущена", {
+        description: `Задача ${result.taskId} зарегистрирована. Подгрузка данных займет несколько секунд.`,
+      })
+
+      await refreshStatus(true)
+      await refreshTasks()
+    } catch (err) {
+      toast.error("Не удалось загрузить участников из базы", { description: errorMessage(err) })
+    } finally {
+      setIsFastLoading(false)
+    }
+  }
+
+  // Остановка задачи
   const handleStopTask = async () => {
     setIsStoppingTask(true)
     try {
-      await stopTask()
+      if (status?.taskId) {
+        await request(`tasks/${status.taskId}/stop`, { method: "POST" })
+      } else {
+        await request("stop", { method: "POST" })
+      }
       toast.info("Сигнал остановки отправлен")
-    } catch (error) {
-      toast.error("Не удалось остановить задачу", { description: errorMessage(error) })
+      await refreshStatus(true)
+      await refreshTasks()
+    } catch (err) {
+      toast.error("Не удалось остановить задачу", { description: errorMessage(err) })
     } finally {
       setIsStoppingTask(false)
     }
   }
 
+  // Синхронизация БД
   const handleSyncDatabase = async () => {
     setIsSyncingDb(true)
     try {
-      const result = await viberRequest<{ message: string }>("database/sync", { method: "POST" })
-      toast.success("База синхронизирована с эмулятором", { description: result?.message })
-      void reloadDbStats()
-      void reloadGroups()
-      void reloadMembers()
-    } catch (error) {
-      toast.error("Ошибка синхронизации базы", { description: errorMessage(error) })
+      await request<{ message: string; conversationsCount?: number }>("database/sync", {
+        method: "POST",
+        body: { deviceId: deviceId || undefined },
+      })
+      toast.success("Данные успешно обновлены")
+      await refreshDbStats(undefined, { force: true })
+      await refreshGroups(undefined, { force: true })
+      if (selectedGroupId) await refreshMembers(selectedGroupId, undefined, { force: true })
+    } catch {
+      toast.error("Не удалось обновить данные")
     } finally {
       setIsSyncingDb(false)
     }
   }
 
-  const handleDecodeDatabase = async () => {
+  // Дешифровка БД
+  const handleDecodeDatabase = async (limit?: number) => {
     setIsDecodingDb(true)
     try {
-      const result = await viberRequest<ViberDecodeResponse>("database/decode", {
+      const res = await request<ViberDecodeResponse>("database/decode", {
         method: "POST",
-        body: { restartApp: true, waitForSyncSeconds: 10 },
+        body: {
+          limit,
+          restartApp: true,
+          waitForSyncSeconds: 10,
+          deviceId: deviceId || undefined,
+        },
       })
-      setLastDecodeResult(result)
-      toast.success("Дешифровка завершена успешно!", {
-        description: `Дешифровано ${result?.decodedCount ?? 0} записей. Найдено недешифрованных: ${
-          result?.undecodedFound ?? 0
-        }.`,
+      setLastDecodeResult(res)
+      toast.success("Синхронизация телефонов завершена", {
+        description: `Синхронизировано: ${res.decodedCount}. Всего обработано: ${res.read}.`,
       })
-      void reloadDbStats()
-      void reloadGroups()
-      void reloadMembers()
-    } catch (error) {
-      toast.error("Ошибка дешифровки", { description: errorMessage(error) })
+      await refreshDbStats(undefined, { force: true })
+      await refreshGroups(undefined, { force: true })
+      if (selectedGroupId) await refreshMembers(selectedGroupId, undefined, { force: true })
+    } catch {
+      toast.error("Не удалось синхронизировать телефоны")
     } finally {
       setIsDecodingDb(false)
     }
   }
 
+  // Управление монитором сообщений
   const handleToggleMonitor = async () => {
     setMonitorToggling(true)
     try {
       if (monitorStatus?.isRunning) {
-        await viberRequest("messages/monitor/stop", { method: "POST" })
+        await request("messages/monitor/stop", { method: "POST" })
         toast.info("Опрос остановлен. Курсоры групп сохранены.")
       } else {
-        await viberRequest("messages/monitor/start", { method: "POST", body: {} })
+        await request("messages/monitor/start", {
+          method: "POST",
+          body: { deviceId: instance },
+        })
         toast.success("Мониторинг сообщений запущен")
       }
-      void reloadMonitor()
-    } catch (error) {
-      toast.error("Ошибка управления монитором", { description: errorMessage(error) })
+      await refreshMonitor()
+    } catch (err) {
+      toast.error("Ошибка управления монитором", { description: errorMessage(err) })
     } finally {
       setMonitorToggling(false)
     }
   }
 
-  const handleToggleMonitorGroup = async (conversationId: number, enabled: boolean) => {
+  const handleToggleMonitorGroup = async (
+    conversationId: number,
+    enabled: boolean,
+    groupKey: string | null = null
+  ) => {
     setTogglingMonitorGroupId(conversationId)
     try {
+      // Инстанс и глобальный ключ группы идут телом: локальный ID в списке
+      // может принадлежать другому аккаунту организации.
       const path = enabled
         ? `messages/monitor/groups/${conversationId}/enable`
-        : `messages/monitor/groups/${conversationId}/disable`
-      await viberRequest(path, { method: "POST", body: {} })
+        : withMonitorDevice(`messages/monitor/groups/${conversationId}/disable`)
+      await request(path, {
+        method: "POST",
+        body: enabled
+          ? { deviceId: instance, ...(groupKey ? { groupKey } : {}) }
+          : undefined,
+      })
       toast.success(enabled ? "Группа включена в мониторинг" : "Группа снята с мониторинга")
-      void reloadMonitor()
-    } catch (error) {
-      toast.error("Не удалось изменить мониторинг группы", { description: errorMessage(error) })
+      await refreshMonitor()
+    } catch (err) {
+      toast.error("Не удалось изменить мониторинг группы", { description: errorMessage(err) })
     } finally {
       setTogglingMonitorGroupId(null)
     }
   }
 
-  const handleOpenTaskDetail = React.useCallback(async (taskId: string) => {
-    try {
-      return await viberRequest<TaskDetailDto>(`tasks/${taskId}`)
-    } catch (error) {
-      toast.error("Не удалось загрузить детали задачи", { description: errorMessage(error) })
-      return null
-    }
-  }, [])
-
-  const exportBaseName = `participants-${selectedGroupId ?? "group"}`
-
+  // Экспорт участников
   const handleExportJson = () => {
     if (!filteredMembers.length) return
-    downloadTextFile(
-      JSON.stringify(buildMemberRows(filteredMembers), null, 2),
-      `${exportBaseName}.json`,
-      "application/json"
-    )
+    const exportData = filteredMembers.map((m, idx) => ({
+      "№": idx + 1,
+      "Имя": m.name ?? "",
+      "Номер телефона": m.phoneNumber ?? m.rawNumber ?? "",
+      "Роль": m.roleLabel ?? "",
+      "Дата последнего визита": m.isOnline ? "В сети" : m.lastSeen ? formatLastSeen(m.lastSeen) : "",
+    }))
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `participants-${selectedGroupId ?? "group"}.json`
+    a.click()
+    URL.revokeObjectURL(url)
     toast.success(`Файл JSON сохранен (${filteredMembers.length} записей)`)
   }
 
   const handleExportTxt = () => {
     if (!filteredMembers.length) return
-    downloadTextFile(
-      buildMembersTxt(filteredMembers),
-      `${exportBaseName}.txt`,
-      "text/plain;charset=utf-8"
-    )
+    const lines = filteredMembers.map((m, idx) => {
+      const num = `${idx + 1}.`
+      const name = m.name ?? "—"
+      const phone = m.phoneNumber || m.rawNumber || "Без номера"
+      const role = m.roleLabel ?? "—"
+      const lastVisit = m.isOnline ? "В сети" : m.lastSeen ? formatLastSeen(m.lastSeen) : "—"
+      return `${num.padEnd(5)} ${name.padEnd(25)} ${phone.padEnd(18)} ${role.padEnd(14)} ${lastVisit}`
+    })
+    const header = `${"№".padEnd(5)} ${"Имя".padEnd(25)} ${"Номер телефона".padEnd(18)} ${"Роль".padEnd(14)} Дата последнего визита`
+    const separator = "─".repeat(header.length)
+    const content = [header, separator, ...lines].join("\n")
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `participants-${selectedGroupId ?? "group"}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
     toast.success(`Файл TXT сохранен (${filteredMembers.length} записей)`)
   }
 
   const handleExportCsv = () => {
     if (!filteredMembers.length) return
-    downloadTextFile(
-      buildMembersCsv(filteredMembers),
-      `${exportBaseName}.csv`,
-      "text/csv;charset=utf-8"
-    )
+    const escapeCell = (val: unknown) => {
+      const str = val === null || val === undefined ? "" : String(val)
+      if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r") || str.includes(";")) {
+        return `"${str.replace(/"/g, '""')}"`
+      }
+      return str
+    }
+
+    const headers = [
+      "№",
+      "Имя",
+      "Номер телефона",
+      "Роль",
+      "Дата последнего визита",
+    ]
+
+    const rows = filteredMembers.map((m, idx) => {
+      const lastVisit = m.isOnline ? "В сети" : m.lastSeen ? formatLastSeen(m.lastSeen) : ""
+      return [
+        idx + 1,
+        m.name ?? "",
+        m.phoneNumber ?? m.rawNumber ?? "",
+        m.roleLabel ?? "",
+        lastVisit,
+      ]
+        .map(escapeCell)
+        .join(",")
+    })
+
+    const csvContent = "\uFEFF" + [headers.map(escapeCell).join(","), ...rows].join("\r\n")
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `participants-${selectedGroupId ?? "group"}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
     toast.success(`Файл CSV сохранен (${filteredMembers.length} записей)`)
   }
 
   const handleCopyPhones = () => {
     if (!filteredMembers.length) return
-    const phones = collectUniquePhones(filteredMembers)
-    if (!phones.length) {
+    const uniquePhones = Array.from(
+      new Set(
+        filteredMembers
+          .map((m) => m.phoneNumber)
+          .filter((p) => p && !p.toLowerCase().startsWith("em") && p !== "Ожидает дешифровки")
+      )
+    )
+    if (!uniquePhones.length) {
       toast.warning("Нет открытых номеров для копирования")
       return
     }
-    void navigator.clipboard.writeText(phones.join("\n"))
-    toast.success(`Скопировано ${phones.length} уникальных номеров в буфер обмена`)
+    navigator.clipboard.writeText(uniquePhones.join("\n"))
+    toast.success(`Скопировано ${uniquePhones.length} уникальных номеров в буфер обмена`)
   }
 
-  // Промис отдаём наружу: кнопка «Обновить» крутится, пока идут все запросы.
-  const handleRefreshAll = async () => {
-    await Promise.all([refresh(), reloadGroups(), reloadDbStats(), reloadMembers()])
+  // Фильтрация и дедупликация участников
+  const filteredMembers = React.useMemo(() => {
+    const list = members?.members ?? []
+    const q = memberSearchQuery.trim().toLowerCase()
+
+    const filtered = list.filter((m) => {
+      // Role / decoded filter
+      const isDecoded = m.isDecoded ?? (!m.phoneNumber.toLowerCase().startsWith("em") && m.phoneNumber !== "Ожидает дешифровки")
+      if (memberRoleFilter === "decoded" && !isDecoded) return false
+      if (memberRoleFilter === "undecoded" && isDecoded) return false
+      if (memberRoleFilter === "admins" && m.roleLabel !== "admin" && m.roleLabel !== "superadmin") return false
+
+      if (!q) return true
+      const phoneMatch = m.phoneNumber.toLowerCase().includes(q)
+      const nameMatch = m.name ? m.name.toLowerCase().includes(q) : false
+      const rawMatch = m.rawNumber ? m.rawNumber.toLowerCase().includes(q) : false
+      return phoneMatch || nameMatch || rawMatch
+    })
+
+    if (!hideDuplicates) {
+      return filtered
+    }
+
+    const seenPhones = new Set<string>()
+    const seenMemberIds = new Set<string>()
+    const result: typeof filtered = []
+
+    for (const m of filtered) {
+      // Нормализация номера
+      let normPhone: string | null = null
+      const rawP = m.phoneNumber || m.rawNumber
+      if (rawP && !rawP.toLowerCase().startsWith("em") && rawP !== "Ожидает дешифровки") {
+        const digits = rawP.replace(/[^\d+]/g, "")
+        if (digits) {
+          normPhone = digits.startsWith("+") ? digits : `+${digits}`
+        }
+      }
+
+      const memId = m.memberId?.trim() && !m.memberId.startsWith("em:") ? m.memberId.trim() : null
+
+      if (normPhone && seenPhones.has(normPhone)) {
+        continue
+      }
+      if (memId && seenMemberIds.has(memId)) {
+        continue
+      }
+
+      if (normPhone) seenPhones.add(normPhone)
+      if (memId) seenMemberIds.add(memId)
+      result.push(m)
+    }
+
+    return result
+  }, [members, memberSearchQuery, memberRoleFilter, hideDuplicates])
+
+  // Размер страницы читаем уже на клиенте: на сервере хранилища нет,
+  // а расхождение разметки при гидратации нам не нужно.
+  React.useEffect(() => {
+    const stored = readStoredMembersPageSize()
+    if (stored !== null) setMembersPageSize(stored)
+  }, [])
+
+  // Новый набор строк всегда показываем с первой страницы
+  React.useEffect(() => {
+    setMembersPage(1)
+  }, [members, memberSearchQuery, memberRoleFilter, hideDuplicates, selectedGroupId])
+
+  const membersTotalPages = Math.max(1, Math.ceil(filteredMembers.length / membersPageSize))
+  // Список мог сократиться под текущей страницей — подрезаем её при рендере,
+  // не дожидаясь эффекта, иначе один кадр таблица будет пустой.
+  const membersCurrentPage = Math.min(membersPage, membersTotalPages)
+  const membersOffset = (membersCurrentPage - 1) * membersPageSize
+  const membersRangeStart = filteredMembers.length === 0 ? 0 : membersOffset + 1
+  const membersRangeEnd = Math.min(membersOffset + membersPageSize, filteredMembers.length)
+
+  const pagedMembers = React.useMemo(
+    () => filteredMembers.slice(membersOffset, membersOffset + membersPageSize),
+    [filteredMembers, membersOffset, membersPageSize]
+  )
+
+  React.useEffect(() => {
+    setMembersPage((current) => (current > membersTotalPages ? membersTotalPages : current))
+  }, [membersTotalPages])
+
+  const handleMembersPageSizeChange = (value: string) => {
+    const size = Number.parseInt(value, 10)
+    if (!MEMBERS_PAGE_SIZE_OPTIONS.some((option) => option === size)) return
+    setMembersPageSize(size)
+    setMembersPage(1)
+    storeMembersPageSize(size)
   }
+
+  const isTaskRunning =
+    (status?.state === "RUNNING" || status?.state === "INITIALIZING") &&
+    activeTaskDetail?.status !== "ready" &&
+    activeTaskDetail?.status !== "stopped" &&
+    activeTaskDetail?.status !== "error"
+
+  const connectionState = deriveConnectionState({
+    tracker: connection,
+    status,
+    now: connectionNow,
+  })
+  const connectionView = describeConnection(connectionState, {
+    tracker: connection,
+    status,
+    now: connectionNow,
+  })
+
+  const monitorGroupRows = React.useMemo(() => {
+    const onInstance = (monitorStatus?.groups ?? []).filter(
+      (item) => (item.deviceId?.trim() || MONITOR_DEFAULT_DEVICE_ID) === instance
+    )
+    const monitoredById = new Map(onInstance.map((item) => [item.conversationId, item]))
+    const monitoredByKey = new Map(
+      onInstance.filter((item) => Boolean(item.groupKey)).map((item) => [String(item.groupKey), item])
+    )
+    const rows = groups
+      .filter((group) => group.conversationType !== 0)
+      .map((group) => {
+        const key =
+          group.groupId === null || group.groupId === undefined
+            ? null
+            : String(group.groupId).trim() || null
+        const match =
+          (key ? monitoredByKey.get(key) : undefined) ?? monitoredById.get(group.conversationId)
+        return {
+          conversationId: match?.conversationId ?? group.conversationId,
+          groupKey: key ?? match?.groupKey ?? null,
+          name: groupName(group),
+          enabled: match?.enabled ?? false,
+          missingOnDevice: false,
+        }
+      })
+    const seenIds = new Set(rows.map((row) => row.conversationId))
+    const seenNames = new Set(rows.map((row) => (row.name || '').trim().toLowerCase()))
+    for (const item of onInstance) {
+      if (seenIds.has(item.conversationId)) continue
+      if (item.name && seenNames.has(item.name.trim().toLowerCase())) continue
+      // Группы нет на инстансе: включить её заново нельзя — сервер ответит 404.
+      // Выключенную прячем, включённую оставляем, чтобы было чем её снять.
+      if (!item.enabled) continue
+      rows.push({
+        conversationId: item.conversationId,
+        groupKey: item.groupKey ?? null,
+        name: item.name || `Группа ${item.conversationId}`,
+        enabled: item.enabled,
+        missingOnDevice: true,
+      })
+    }
+    return rows.sort((a, b) => Number(b.enabled) - Number(a.enabled) || a.name.localeCompare(b.name, "ru"))
+  }, [groups, monitorStatus?.groups, instance])
+
+  const stepTimeline = React.useMemo(
+    () => buildStepTimeline(activeTaskDetail, extractStepName(status?.currentStep)),
+    [activeTaskDetail, status?.currentStep]
+  )
+
+  const isFastDbTask = React.useMemo(() => {
+    return (
+      stepTimeline.visitedSteps.includes("loading_from_db") ||
+      stepTimeline.currentStep === "loading_from_db"
+    )
+  }, [stepTimeline])
+
+  const activeStepsList = isFastDbTask ? DB_LOAD_STEPS_ORDER : ALL_STEPS_ORDER
+
+  const completedStepsCount = activeStepsList.filter(
+    (step) => stepTimeline.byStep[step]?.state === "completed"
+  ).length
+
+  const currentStepKey = isTaskRunning ? (stepTimeline.currentStep ?? "") : ""
+
+  const currentStepLabel =
+    STEP_LABELS[currentStepKey]?.title || (currentStepKey ? "Выполнение этапа" : "Выполняется")
 
   return (
     <div className="space-y-6">
-      <ParserHeader
-        connection={connection}
-        initialLoadDone={initialLoadDone}
-        consecutiveFailures={consecutiveFailures}
-        lastError={lastError}
-        isTaskRunning={isTaskRunning}
-        currentStepLabel={currentStepLabel}
-        isStopping={isStoppingTask}
-        isRefreshing={!initialLoadDone}
-        onStop={() => void handleStopTask()}
-        onRefresh={handleRefreshAll}
-      />
+      {/* Верхний статус-бар Device & Mutex */}
+      <Card className="border-border/60 shadow-xs">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <div
+                className={`flex size-9 items-center justify-center rounded-lg ${
+                  connectionView.tone === "ok"
+                    ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                    : connectionView.tone === "warn"
+                      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+                      : connectionView.tone === "danger"
+                        ? "bg-destructive/15 text-destructive"
+                        : "bg-muted text-muted-foreground"
+                }`}
+              >
+                <RadioIcon className="size-5" />
+              </div>
+              <div role="status" data-testid="service-connection">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-semibold text-sm">Сервис сбора данных</h3>
+                  {connectionView.tone === "ok" ? (
+                    <Badge variant="outline" className="gap-1 border-emerald-500/30 text-emerald-600 dark:text-emerald-400 text-xs">
+                      <span className="size-1.5 rounded-full bg-emerald-500" />
+                      {connectionView.label}
+                    </Badge>
+                  ) : connectionView.tone === "warn" ? (
+                    <Badge
+                      variant="outline"
+                      className="gap-1 border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs"
+                      title={connectionView.hint}
+                    >
+                      <Loader2Icon className="size-3 animate-spin" />
+                      {connectionView.label}
+                    </Badge>
+                  ) : connectionView.tone === "danger" ? (
+                    <Badge variant="destructive" className="text-xs" title={connectionView.hint}>
+                      {connectionView.label}
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="gap-1 text-xs">
+                      <Loader2Icon className="size-3 animate-spin" />
+                      {connectionView.label}
+                    </Badge>
+                  )}
+                </div>
+                <p
+                  className={`text-xs mt-0.5 ${
+                    connectionView.tone === "warn"
+                      ? "text-amber-600 dark:text-amber-400"
+                      : connectionView.tone === "danger"
+                        ? "text-destructive"
+                        : "text-muted-foreground"
+                  }`}
+                >
+                  {connectionView.hint}
+                </p>
 
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => setActiveTab(value as PanelTab)}
-        className="space-y-4"
-      >
-        <TabsList className="grid h-auto w-full grid-cols-2 bg-muted/60 p-1 md:grid-cols-4">
-          <TabsTrigger value="collect" className="gap-2 py-2 text-xs font-medium sm:text-sm">
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5">
+              {isTaskRunning ? (
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="gap-1.5 py-1 px-2.5 font-medium animate-pulse bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/30">
+                    <Loader2Icon className="size-3 animate-spin text-indigo-600" />
+                    <span>{currentStepLabel}</span>
+                  </Badge>
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-8 gap-1 text-xs"
+                    onClick={handleStopTask}
+                    disabled={isStoppingTask}
+                  >
+                    <SquareIcon className="size-3" />
+                    Остановить
+                  </Button>
+                </div>
+              ) : (
+                <Badge variant="secondary" className="text-xs font-normal">
+                  Сервис свободен
+                </Badge>
+              )}
+
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-8 text-muted-foreground"
+                onClick={() => {
+                  void refreshStatus()
+                  void refreshGroups(undefined, { force: true })
+                  void refreshDbStats(undefined, { force: true })
+                  void refreshTasks()
+                }}
+                disabled={statusLoading}
+                title="Обновить данные"
+              >
+                <RefreshCwIcon className={`size-4 ${statusLoading ? "animate-spin" : ""}`} />
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Навигационные вкладки */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as typeof activeTab)} className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2 md:grid-cols-4 h-auto p-1 bg-muted/60">
+          <TabsTrigger value="collect" className="gap-2 py-2 text-xs sm:text-sm font-medium">
             <UsersIcon className="size-4" />
             <span>Сбор участников</span>
-            {isTaskRunning ? (
-              <span className="size-2 animate-ping rounded-full bg-indigo-500" />
-            ) : null}
+            {isTaskRunning && <span className="size-2 rounded-full bg-indigo-500 animate-ping" />}
           </TabsTrigger>
-          <TabsTrigger value="database" className="gap-2 py-2 text-xs font-medium sm:text-sm">
+          <TabsTrigger value="database" className="gap-2 py-2 text-xs sm:text-sm font-medium">
             <DatabaseIcon className="size-4" />
-            <span>База данных</span>
-            {dbStatsResource.data && dbStatsResource.data.undecodedParticipantsCount > 0 ? (
-              <Badge
-                variant="secondary"
-                className="bg-amber-500/15 px-1.5 py-0 text-[10px] text-amber-700 dark:text-amber-300"
-              >
-                {dbStatsResource.data.undecodedParticipantsCount}
+            <span>Данные</span>
+            {dbStats && dbStats.undecodedParticipantsCount > 0 && (
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px] bg-amber-500/15 text-amber-700 dark:text-amber-300">
+                {dbStats.undecodedParticipantsCount}
               </Badge>
-            ) : null}
+            )}
           </TabsTrigger>
-          <TabsTrigger value="history" className="gap-2 py-2 text-xs font-medium sm:text-sm">
+          <TabsTrigger value="history" className="gap-2 py-2 text-xs sm:text-sm font-medium">
             <HistoryIcon className="size-4" />
             <span>История задач</span>
-            {tasks.length > 0 ? (
+            {tasks.length > 0 && (
               <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
                 {tasks.length}
               </Badge>
-            ) : null}
+            )}
           </TabsTrigger>
-          <TabsTrigger value="monitor" className="gap-2 py-2 text-xs font-medium sm:text-sm">
+          <TabsTrigger value="monitor" className="gap-2 py-2 text-xs sm:text-sm font-medium">
             <RadioIcon className="size-4" />
             <span>Монитор сообщений</span>
-            {monitorStatus?.isRunning ? (
-              <span className="size-2 animate-pulse rounded-full bg-emerald-500" />
-            ) : null}
+            {monitorStatus?.isRunning && (
+              <span className="size-2 rounded-full bg-emerald-500 animate-pulse" />
+            )}
           </TabsTrigger>
         </TabsList>
 
+        {/* ----------------- ВКЛАДКА 1: СБОР УЧАСТНИКОВ ----------------- */}
         <TabsContent value="collect" className="space-y-4">
-          <CollectCard
-            groups={groups}
-            groupsLoading={groupsResource.loading && !groupsResource.data}
-            groupsError={groupsResource.error}
-            onRetryGroups={reloadGroups}
-            selectedGroupId={selectedGroupId}
-            onSelectGroup={setSelectedGroupId}
-            selectedGroup={selectedGroup}
-            restartApp={restartAppAfterCollect}
-            onRestartAppChange={setRestartAppAfterCollect}
-            isTaskRunning={isTaskRunning}
-            isStarting={isStartingCollect}
-            isStopping={isStoppingTask}
-            onStart={() => void handleStartCollect()}
-            onStop={() => void handleStopTask()}
-          />
+          {/* Панель запуска сбора */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <CardTitle className="text-base font-semibold">Сбор участников</CardTitle>
+                  <CardDescription className="text-xs">
+                    Выберите группу для сбора участников
+                  </CardDescription>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-0">
+              <div className="grid gap-4 sm:grid-cols-2">
+                {/* Выбор группы */}
+                <div className="space-y-1.5">
+                  <Label htmlFor="select-group" className="text-xs">Группа / Сообщество</Label>
+                  <Select
+                    value={selectedGroupId ?? undefined}
+                    onValueChange={setSelectedGroupId}
+                    disabled={groupsLoading || groups.length === 0 || isTaskRunning}
+                  >
+                    <SelectTrigger id="select-group" className="text-xs">
+                      <SelectValue placeholder="Выберите группу" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {groups.map((g) => (
+                        <SelectItem key={g.conversationId} value={String(g.conversationId)}>
+                          <div className="flex items-center justify-between gap-2 w-full">
+                            <span className="font-medium truncate max-w-[200px]">{groupName(g)}</span>
+                            <span className="text-muted-foreground font-mono text-[11px]">
+                              ({(g.memberCount ?? 0).toLocaleString("ru-RU")} уч.
+                              {g.storedPhoneCount ? ` • в базе ${g.storedPhoneCount.toLocaleString("ru-RU")} ном.` : ""}
+                              )
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {groupsError ? (
+                    <p className="text-[11px] text-destructive">Инстанс недоступен: {groupsError}</p>
+                  ) : null}
+                </div>
 
-          {task ? (
-            <PipelineCard
-              task={task}
-              isTaskRunning={isTaskRunning}
-              isTaskLost={isTaskLost}
-              connection={connection}
-              onDismiss={dismissTask}
-              onExportTxt={handleExportTxt}
-              onExportCsv={handleExportCsv}
-              onExportJson={handleExportJson}
-              onCopyPhones={handleCopyPhones}
-            />
-          ) : null}
+                {/* Дополнительные параметры */}
+                <div className="flex flex-col justify-end">
+                  <div className="flex items-center space-x-2 py-2">
+                    <Switch
+                      id="restart-app"
+                      checked={restartAppAfterCollect}
+                      onCheckedChange={setRestartAppAfterCollect}
+                      disabled={isTaskRunning}
+                    />
+                    <Label htmlFor="restart-app" className="text-xs cursor-pointer">
+                      Синхронизация телефонов
+                    </Label>
+                  </div>
+                </div>
+              </div>
 
-          <MembersCard
-            selectedGroup={selectedGroup}
-            members={members}
-            filteredMembers={filteredMembers}
-            loading={membersResource.loading}
-            error={membersResource.error}
-            onRetry={reloadMembers}
-            searchQuery={memberSearchQuery}
-            onSearchQueryChange={setMemberSearchQuery}
-            filter={memberFilter}
-            onFilterChange={setMemberFilter}
-            hideDuplicates={hideDuplicates}
-            onHideDuplicatesChange={setHideDuplicates}
-            onExportTxt={handleExportTxt}
-            onExportCsv={handleExportCsv}
-            onExportJson={handleExportJson}
-            onCopyPhones={handleCopyPhones}
-          />
+              {/* Баннер о наличии сохраненных данных в базе */}
+              {selectedGroup?.hasStoredData && (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-xs text-emerald-800 dark:text-emerald-200">
+                  <div className="flex items-start sm:items-center gap-2.5">
+                    <DatabaseIcon className="size-4 shrink-0 mt-0.5 sm:mt-0 text-emerald-600 dark:text-emerald-400" />
+                    <div>
+                      <span>
+                        В базе уже есть сохранённые данные:{" "}
+                        <strong className="font-semibold text-foreground">
+                          {(selectedGroup.storedParticipantCount ?? selectedGroup.memberCount).toLocaleString("ru-RU")}
+                        </strong>{" "}
+                        уч.
+                        {selectedGroup.storedPhoneCount ? (
+                          <>
+                            {" "}
+                            (
+                            <strong className="font-semibold text-foreground">
+                              {selectedGroup.storedPhoneCount.toLocaleString("ru-RU")}
+                            </strong>{" "}
+                            с номерами телефонов)
+                          </>
+                        ) : null}
+                        . Можно подгрузить мгновенно без повторного скрапинга эмулятором.
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleFastLoadFromDb}
+                    disabled={isTaskRunning || isStartingCollect || isFastLoading}
+                    className="shrink-0 gap-1.5 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 text-xs h-8"
+                  >
+                    {isFastLoading ? (
+                      <Loader2Icon className="size-3.5 animate-spin" />
+                    ) : (
+                      <DownloadIcon className="size-3.5" />
+                    )}
+                    Подгрузить из базы
+                  </Button>
+                </div>
+              )}
+
+              {/* Кнопки запуска и остановки */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t">
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={handleStartCollect}
+                    disabled={!selectedGroup || isTaskRunning || isStartingCollect}
+                    className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium shadow-xs text-xs sm:text-sm"
+                  >
+                    {isStartingCollect ? (
+                      <Loader2Icon className="size-4 animate-spin" />
+                    ) : (
+                      <SparklesIcon className="size-4" />
+                    )}
+                    {isStartingCollect ? "Инициализация…" : "Запустить сбор участников"}
+                  </Button>
+
+                  {isTaskRunning && (
+                    <Button
+                      variant="destructive"
+                      onClick={handleStopTask}
+                      disabled={isStoppingTask}
+                      className="gap-1.5 text-xs sm:text-sm"
+                    >
+                      <SquareIcon className="size-4" />
+                      Остановить сбор
+                    </Button>
+                  )}
+                </div>
+
+                {selectedGroup && (
+                  <div className="text-xs text-muted-foreground">
+                    Выбрано: <span className="font-semibold text-foreground">{groupName(selectedGroup)}</span> (ID {selectedGroup.conversationId})
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Этапы сбора участников */}
+          {(isTaskRunning || activeTaskDetail) && (
+            <Card
+              className={`border-border/60 ${
+                isTaskRunning
+                  ? "border-indigo-500/30 bg-indigo-500/[0.02]"
+                  : activeTaskDetail?.status === "ready"
+                    ? "border-emerald-500/30 bg-emerald-500/[0.02]"
+                    : ""
+              }`}
+            >
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {isTaskRunning ? (
+                      <div className="size-2 rounded-full bg-indigo-600 animate-ping" />
+                    ) : activeTaskDetail?.status === "ready" ? (
+                      <CheckCircle2Icon className="size-4 text-emerald-600 dark:text-emerald-400" />
+                    ) : (
+                      <div className="size-2 rounded-full bg-muted-foreground" />
+                    )}
+                    <CardTitle className="text-sm font-semibold">
+                      {isTaskRunning
+                        ? "Этапы сбора участников"
+                        : activeTaskDetail?.status === "ready"
+                          ? `Сбор участников завершен: ${activeTaskDetail.groupName || activeTaskDetail.groupTarget}`
+                          : "Итоги задачи сбора"}
+                    </CardTitle>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {activeTaskDetail?.id && (
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {activeTaskDetail.id}
+                      </Badge>
+                    )}
+                    {!isTaskRunning && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                        onClick={() => {
+                          // Скрытую задачу не возвращаем ни фоновым опросом, ни кнопкой «Обновить»
+                          if (activeTaskDetail?.id) hiddenTaskIdRef.current = activeTaskDetail.id
+                          loadedDetailIdRef.current = null
+                          setActiveTaskDetail(null)
+                        }}
+                      >
+                        Скрыть
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                <CardDescription className="text-xs">
+                  {isTaskRunning
+                    ? "Последовательное выполнение этапов сбора"
+                    : activeTaskDetail?.status === "ready"
+                      ? `Все этапы сбора успешно пройдены (${completedStepsCount} из ${activeStepsList.length}). Результаты готовы к экспорту.`
+                      : "Выполнение задачи завершено."}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Сетка шагов */}
+                <div className="grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5">
+                  {activeStepsList.map((stepKey, idx) => {
+                    const stepMeta = STEP_LABELS[stepKey] ?? { title: "Выполнение этапа", desc: "Обработка данных" }
+                    const stepView = stepTimeline.byStep[stepKey]
+                    // Спиннер только пока задача действительно идёт: иначе шапка
+                    // говорит «сервис свободен», а карточка крутит загрузку.
+                    const isCurrent = isTaskRunning && stepView?.state === "current"
+                    const isCompleted = stepView?.state === "completed"
+                    const isError = stepView?.state === "error"
+                    const isStopped =
+                      stepView?.state === "stopped" || (!isTaskRunning && stepView?.state === "current")
+
+                    return (
+                      <div
+                        key={stepKey}
+                        data-step={stepKey}
+                        data-step-state={
+                          isCurrent
+                            ? "current"
+                            : isCompleted
+                              ? "completed"
+                              : isError
+                                ? "error"
+                                : isStopped
+                                  ? "stopped"
+                                  : "pending"
+                        }
+                        className={`relative flex flex-col p-2.5 rounded-lg border text-xs transition-all ${
+                          isCurrent
+                            ? "border-indigo-500 bg-indigo-500/10 shadow-xs ring-1 ring-indigo-500/30"
+                            : isCompleted
+                              ? "border-emerald-500/30 bg-emerald-500/5 text-muted-foreground"
+                              : isError
+                                ? "border-destructive/40 bg-destructive/10"
+                                : isStopped
+                                  ? "border-amber-500/40 bg-amber-500/10"
+                                  : "border-border/40 bg-card/40 opacity-60"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-1 mb-1">
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            {String(idx + 1).padStart(2, "0")}
+                          </span>
+                          {isCurrent ? (
+                            <Loader2Icon className="size-3.5 animate-spin text-indigo-600" />
+                          ) : isCompleted ? (
+                            <CheckCircle2Icon className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                          ) : isError ? (
+                            <AlertCircleIcon className="size-3.5 text-destructive" />
+                          ) : isStopped ? (
+                            <SquareIcon className="size-3 text-amber-600 dark:text-amber-400" />
+                          ) : (
+                            <span className="size-2 rounded-full bg-border" />
+                          )}
+                        </div>
+
+                        <span className="font-semibold text-foreground text-[11px] leading-tight">
+                          {stepMeta.title}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground line-clamp-1 mt-0.5">
+                          {stepMeta.desc}
+                        </span>
+
+                        {stepView?.durationMs !== undefined && stepView?.durationMs !== null && (
+                          <div className="mt-1.5 pt-1 border-t border-border/30 text-[10px] font-mono text-muted-foreground flex items-center justify-between">
+                            <span>{stepView.occurrences > 1 ? `Время (×${stepView.occurrences}):` : "Время:"}</span>
+                            <span className="font-semibold">
+                              {(stepView.durationMs / 1000).toFixed(1)}с
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Прогресс сбора и проверки активности */}
+                {activeTaskDetail?.progress && (activeTaskDetail.progress.pagesCount !== undefined || activeTaskDetail.progress.onlineTotal !== undefined) && (
+                  <div className="rounded-lg border bg-card/80 p-3 text-xs space-y-2">
+                    {activeTaskDetail.progress.pagesCount !== undefined && (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-foreground">Прогресс сбора:</span>
+                          <div className="flex items-center gap-3 font-mono font-semibold">
+                            <span>Обработано: {activeTaskDetail.progress.currentOffset ?? 0}</span>
+                            {activeTaskDetail.progress.headerTotal ? (
+                              <span>Всего: {activeTaskDetail.progress.headerTotal}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                        {typeof activeTaskDetail.progress.headerTotal === "number" &&
+                          activeTaskDetail.progress.headerTotal > 0 && (
+                            <Progress
+                              value={Math.min(
+                                100,
+                                Math.round(
+                                  ((activeTaskDetail.progress.currentOffset ?? 0) /
+                                    activeTaskDetail.progress.headerTotal) *
+                                    100
+                                )
+                              )}
+                              className="h-1.5"
+                            />
+                          )}
+                      </>
+                    )}
+
+                    {typeof activeTaskDetail.progress.onlineTotal === "number" && activeTaskDetail.progress.onlineTotal > 0 && (
+                      <>
+                        <div className="flex items-center justify-between pt-1">
+                          <span className="font-medium text-foreground">Проверка статуса онлайн / активности:</span>
+                          <div className="flex items-center gap-3 font-mono font-semibold">
+                            <span>Проверено: {activeTaskDetail.progress.onlineChecked ?? 0} / {activeTaskDetail.progress.onlineTotal}</span>
+                          </div>
+                        </div>
+                        <Progress
+                          value={Math.min(
+                            100,
+                            Math.round(
+                              ((activeTaskDetail.progress.onlineChecked ?? 0) /
+                                activeTaskDetail.progress.onlineTotal) *
+                                100
+                            )
+                          )}
+                          className="h-1.5"
+                        />
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Итоговый результат задачи */}
+                {activeTaskDetail?.result && (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2Icon className="size-5 text-emerald-600" />
+                      <div>
+                        <span className="font-semibold text-foreground">Сбор успешно завершен!</span>
+                        <p className="text-muted-foreground text-[11px]">
+                          Собрано {activeTaskDetail.result.participantsCount} участников (с номерами: {activeTaskDetail.result.participantsWithPhone}).
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={handleExportTxt}>
+                        <DownloadIcon className="size-3" />
+                        TXT
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={handleExportCsv}>
+                        <DownloadIcon className="size-3" />
+                        CSV
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={handleExportJson}>
+                        <DownloadIcon className="size-3" />
+                        JSON
+                      </Button>
+                      <Button size="sm" variant="default" className="h-7 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700" onClick={handleCopyPhones}>
+                        <CopyIcon className="size-3" />
+                        Копировать телефоны
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Таблица участников выбранной группы */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold">Участники группы</CardTitle>
+                  <CardDescription className="text-xs">
+                    {selectedGroup ? (
+                      <>
+                        Всего участников: {(members?.count ?? 0).toLocaleString("ru-RU")}
+                        {filteredMembers.length !== (members?.members.length ?? 0) && (
+                          <span className="ml-1.5 text-primary font-medium">
+                            (отобрано: {filteredMembers.length.toLocaleString("ru-RU")})
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      "Выберите группу для просмотра"
+                    )}
+                  </CardDescription>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative w-40 sm:w-56">
+                    <SearchIcon className="absolute left-2.5 top-2.5 size-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Поиск по имени/номеру…"
+                      value={memberSearchQuery}
+                      onChange={(e) => setMemberSearchQuery(e.target.value)}
+                      className="pl-8 h-8 text-xs"
+                    />
+                  </div>
+
+                  <Select
+                    value={memberRoleFilter}
+                    onValueChange={(v) => setMemberRoleFilter(v as typeof memberRoleFilter)}
+                  >
+                    <SelectTrigger className="w-36 h-8 text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все ({members?.count ?? 0})</SelectItem>
+                      <SelectItem value="decoded">С телефоном</SelectItem>
+                      <SelectItem value="undecoded">Ожидают синхронизации</SelectItem>
+                      <SelectItem value="admins">Администраторы</SelectItem>
+                    </SelectContent>
+                  </Select>
+
+                  <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border/60 bg-muted/40 text-xs h-8">
+                    <Switch
+                      id="hide-duplicates"
+                      checked={hideDuplicates}
+                      onCheckedChange={setHideDuplicates}
+                      className="scale-75 data-[state=checked]:bg-emerald-600"
+                    />
+                    <Label htmlFor="hide-duplicates" className="text-xs cursor-pointer select-none font-medium text-muted-foreground hover:text-foreground">
+                      Без дубликатов
+                    </Label>
+                  </div>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 text-xs"
+                    onClick={handleExportTxt}
+                    disabled={!members?.members.length}
+                  >
+                    <DownloadIcon className="size-3" />
+                    TXT
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 text-xs"
+                    onClick={handleExportCsv}
+                    disabled={!members?.members.length}
+                  >
+                    <DownloadIcon className="size-3" />
+                    CSV
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 text-xs"
+                    onClick={handleExportJson}
+                    disabled={!members?.members.length}
+                  >
+                    <DownloadIcon className="size-3" />
+                    JSON
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1 text-xs"
+                    onClick={handleCopyPhones}
+                    disabled={!members?.members.length}
+                  >
+                    <CopyIcon className="size-3" />
+                    Копировать
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-8"
+                    onClick={() =>
+                      selectedGroupId && void refreshMembers(selectedGroupId, undefined, { force: true })
+                    }
+                    disabled={membersLoading}
+                    title="Обновить участников"
+                  >
+                    <RefreshCwIcon className={`size-3.5 ${membersLoading ? "animate-spin" : ""}`} />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {membersLoading && !members ? (
+                <div className="space-y-2 py-4">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ) : filteredMembers.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  {members?.members.length === 0
+                    ? "Участники для этой группы пока не собраны. Нажмите «Запустить сбор участников» выше."
+                    : "Ничего не найдено по выбранным фильтрам."}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[50px]">№</TableHead>
+                        <TableHead className="w-[180px]">Телефон / Номер</TableHead>
+                        <TableHead className="w-[120px]">Статус</TableHead>
+                        <TableHead className="w-[140px]">Активность</TableHead>
+                        <TableHead>Имя контакта</TableHead>
+                        <TableHead className="w-[120px]">Роль в группе</TableHead>
+                        <TableHead className="w-[80px] text-right">Тип</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pagedMembers.map((member, idx) => {
+                        const isDecoded =
+                          member.isDecoded ??
+                          (!member.phoneNumber.toLowerCase().startsWith("em") &&
+                            member.phoneNumber !== "Ожидает дешифровки")
+                        const position = membersOffset + idx + 1
+
+                        return (
+                          <TableRow
+                            key={member.participantId ?? `m-${position}`}
+                            data-testid="members-row"
+                          >
+                            <TableCell className="font-mono text-xs tabular-nums text-muted-foreground">
+                              {position}
+                            </TableCell>
+                            <TableCell className="font-mono text-xs tabular-nums">
+                              {isDecoded ? (
+                                <span className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                  {member.phoneNumber}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                  <ClockIcon className="size-3" />
+                                  Ожидает синхронизации
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isDecoded ? (
+                                <Badge variant="outline" className="text-[10px] font-normal border-emerald-500/30 text-emerald-600 bg-emerald-500/5">
+                                  Доступен
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] font-normal border-amber-500/30 text-amber-600 bg-amber-500/5">
+                                  Ожидает синхронизации
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {member.isOnline ? (
+                                <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] gap-1 hover:bg-emerald-500/20 font-normal">
+                                  <span className="size-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                  В сети
+                                </Badge>
+                              ) : member.lastSeen ? (
+                                <span className="text-[11px] text-muted-foreground font-mono">
+                                  {formatLastSeen(member.lastSeen)}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground text-[11px]">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {member.name ? (
+                                <span className="font-medium text-foreground">{member.name}</span>
+                              ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {member.roleLabel === "superadmin" ? (
+                                <Badge variant="secondary" className="text-[10px] bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/20">
+                                  Суперадмин
+                                </Badge>
+                              ) : member.roleLabel === "admin" ? (
+                                <Badge variant="secondary" className="text-[10px] bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20">
+                                  Админ
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                                  Участник
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              {member.isSelf ? (
+                                <Badge className="text-[10px] bg-emerald-600 text-white gap-1">
+                                  <ShieldIcon className="size-2.5" />
+                                  Бот
+                                </Badge>
+                              ) : null}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+
+                  <div className="flex flex-col gap-3 pt-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Показано {membersRangeStart}–{membersRangeEnd} из{" "}
+                        {filteredMembers.length.toLocaleString("ru-RU")}
+                      </span>
+                      <Select
+                        value={String(membersPageSize)}
+                        onValueChange={handleMembersPageSizeChange}
+                      >
+                        <SelectTrigger className="w-24 h-8 text-xs" aria-label="Размер страницы">
+                          <SelectValue />
+                        </SelectTrigger>
+                        {/* Раскрытие поверх триггера: список коротких опций
+                            не нуждается в поппере и открывается у нижнего края */}
+                        <SelectContent position="item-aligned">
+                          {MEMBERS_PAGE_SIZE_OPTIONS.map((size) => (
+                            <SelectItem key={size} value={String(size)}>
+                              По {size}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        стр. {membersCurrentPage} из {membersTotalPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1 text-xs"
+                        onClick={() => setMembersPage(Math.max(1, membersCurrentPage - 1))}
+                        disabled={membersCurrentPage <= 1}
+                      >
+                        <ChevronLeftIcon className="size-3.5" />
+                        Назад
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-8 gap-1 text-xs"
+                        onClick={() =>
+                          setMembersPage(Math.min(membersTotalPages, membersCurrentPage + 1))
+                        }
+                        disabled={membersCurrentPage >= membersTotalPages}
+                      >
+                        Вперёд
+                        <ChevronRightIcon className="size-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
+        {/* ----------------- ВКЛАДКА 2: БАЗА ДАННЫХ SQLITE ----------------- */}
         <TabsContent value="database" className="space-y-4">
-          <DatabaseTab
-            stats={dbStatsResource.data}
-            statsLoading={dbStatsResource.loading}
-            statsError={dbStatsResource.error}
-            onRetryStats={reloadDbStats}
-            groupsCount={groups.length}
-            isSyncing={isSyncingDb}
-            isDecoding={isDecodingDb}
-            isTaskRunning={isTaskRunning}
-            lastDecodeResult={lastDecodeResult}
-            onSync={() => void handleSyncDatabase()}
-            onDecode={() => void handleDecodeDatabase()}
-          />
+          {/* Карточки статистики */}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <Card className="p-4 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Чаты и диалоги</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {/* Список групп на странице инстанса отфильтрован по устройству,
+                    поэтому его длина занизила бы счётчик чатов в базе. */}
+                {dbStatsLoading ? "…" : dbStats?.conversationsCount ?? "—"}
+              </p>
+              <p className="text-[11px] text-muted-foreground">Доступно для обработки</p>
+            </Card>
+
+            <Card className="p-4 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Всего сообщений</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {dbStatsLoading ? "…" : (dbStats?.messagesCount ?? 0).toLocaleString("ru-RU")}
+              </p>
+              <p className="text-[11px] text-muted-foreground">Сохранено в системе</p>
+            </Card>
+
+            <Card className="p-4 space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Карточек участников</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {dbStatsLoading ? "…" : (dbStats?.participantsCount ?? 0).toLocaleString("ru-RU")}
+              </p>
+              <p className="text-[11px] text-muted-foreground">Доступно в системе</p>
+            </Card>
+
+            <Card className="p-4 space-y-1 border-amber-500/20 bg-amber-500/5">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-amber-700 dark:text-amber-400">Ожидают синхронизации</p>
+                {dbStats && dbStats.undecodedParticipantsCount > 0 && (
+                  <Badge variant="outline" className="text-[10px] border-amber-500/30 text-amber-700 dark:text-amber-400">
+                    Требуется обновление
+                  </Badge>
+                )}
+              </div>
+              <p className="text-2xl font-bold tabular-nums text-amber-700 dark:text-amber-400">
+                {dbStatsLoading ? "…" : (dbStats?.undecodedParticipantsCount ?? 0).toLocaleString("ru-RU")}
+              </p>
+              <p className="text-[11px] text-muted-foreground">Телефоны требуют синхронизации</p>
+            </Card>
+          </div>
+
+          {/* Инструменты работы с базой */}
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Синхронизация снимка базы */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <DatabaseIcon className="size-5 text-primary" />
+                  <CardTitle className="text-base font-semibold">Обновление данных</CardTitle>
+                </div>
+                <CardDescription className="text-xs">
+                  Обновляет информацию для отображения актуальных данных.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Актуальность данных:</span>
+                    <span className="font-semibold text-foreground">
+                      {dbStats?.isSnapshotCurrent ? "Актуален" : "Требуется обновление"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Доступность данных:</span>
+                    <span className="font-semibold text-foreground">Доступны</span>
+                  </div>
+                </div>
+              </CardContent>
+              <CardFooter>
+                <Button
+                  onClick={handleSyncDatabase}
+                  disabled={isSyncingDb || isTaskRunning}
+                  className="w-full gap-2 text-xs sm:text-sm"
+                  variant="outline"
+                >
+                  {isSyncingDb ? (
+                    <Loader2Icon className="size-4 animate-spin" />
+                  ) : (
+                    <RefreshCwIcon className="size-4" />
+                  )}
+                  {isSyncingDb ? "Обновление данных…" : "Обновить данные"}
+                </Button>
+              </CardFooter>
+            </Card>
+
+            {/* Дешифровка базы данных */}
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <KeyRoundIcon className="size-5 text-emerald-600 dark:text-emerald-400" />
+                  <CardTitle className="text-base font-semibold">Синхронизация телефонов</CardTitle>
+                </div>
+                <CardDescription className="text-xs">
+                  Обновляет телефоны участников и приводит сведения к актуальному состоянию.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="rounded-lg border bg-muted/30 p-3 text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Защита системного профиля:</span>
+                    <span className="font-semibold text-emerald-600">Включена</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Режим обновления:</span>
+                    <span className="font-semibold">Автоматический</span>
+                  </div>
+                </div>
+
+                {lastDecodeResult && (
+                  <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 text-xs space-y-1">
+                    <div className="font-semibold text-emerald-700 dark:text-emerald-300">
+                      Результат последней синхронизации:
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      Синхронизировано: <span className="font-semibold text-foreground">{lastDecodeResult.decodedCount}</span> ·
+                      Обработано: <span className="font-semibold text-foreground">{lastDecodeResult.read}</span> ·
+                      Изменено: <span className="font-semibold text-foreground">{lastDecodeResult.changedRows ?? 0}</span>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+              <CardFooter className="flex gap-2">
+                <Button
+                  onClick={() => handleDecodeDatabase()}
+                  disabled={isDecodingDb || isTaskRunning}
+                  className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs sm:text-sm"
+                >
+                  {isDecodingDb ? (
+                    <Loader2Icon className="size-4 animate-spin" />
+                  ) : (
+                    <KeyRoundIcon className="size-4" />
+                  )}
+                  {isDecodingDb ? "Выполняется синхронизация…" : "Синхронизировать телефоны"}
+                </Button>
+              </CardFooter>
+            </Card>
+          </div>
         </TabsContent>
 
+        {/* ----------------- ВКЛАДКА 3: ИСТОРИЯ ЗАДАЧ ----------------- */}
         <TabsContent value="history" className="space-y-4">
-          <HistoryTab
-            tasks={tasks}
-            loading={!initialLoadDone}
-            onRefresh={refresh}
-            onOpenDetail={handleOpenTaskDetail}
-          />
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-base font-semibold">История задач сбора</CardTitle>
+                  <CardDescription className="text-xs">
+                    Реестр запущенных задач, их статусы, длительность и собранные участники
+                  </CardDescription>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-8"
+                  onClick={() => void refreshTasks()}
+                  disabled={tasksLoading}
+                >
+                  <RefreshCwIcon className={`size-3.5 ${tasksLoading ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {tasksLoading && tasks.length === 0 ? (
+                <div className="space-y-2 py-4">
+                  <Skeleton className="h-8 w-full" />
+                  <Skeleton className="h-8 w-full" />
+                </div>
+              ) : tasks.length === 0 ? (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  Задачи еще не запускались в этой сессии.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[180px]">ID задачи</TableHead>
+                        <TableHead>Целевая группа</TableHead>
+                        <TableHead className="w-[110px]">Статус</TableHead>
+                        <TableHead className="w-[130px]">Запущена</TableHead>
+                        <TableHead className="w-[110px] text-right">Участников</TableHead>
+                        <TableHead className="w-[90px] text-right">Действия</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {tasks.map((t) => {
+                        const badgeInfo = taskStatusBadge[t.status] ?? {
+                          label: t.status,
+                          variant: "secondary" as const,
+                        }
+
+                        return (
+                          <TableRow key={t.id}>
+                            <TableCell className="font-mono text-xs">
+                              <span className="font-medium text-foreground">{t.id}</span>
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              <span className="font-medium">{t.groupName || t.groupTarget}</span>
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant={badgeInfo.variant}
+                                className={`text-[10px] font-normal ${badgeInfo.className ?? ""}`}
+                              >
+                                {badgeInfo.label}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground tabular-nums">
+                              {new Date(t.startedAt).toLocaleTimeString("ru-RU")}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-xs tabular-nums">
+                              {t.participantsCollected !== null && t.participantsCollected !== undefined
+                                ? t.participantsCollected.toLocaleString("ru-RU")
+                                : "—"}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-xs px-2 text-primary"
+                                onClick={async () => {
+                                  try {
+                                    const detail = await request<TaskDetailDto>(`tasks/${t.id}`)
+                                    setSelectedHistoryTask(detail)
+                                    setHistoryTaskModalOpen(true)
+                                  } catch {
+                                    toast.error("Не удалось загрузить детали задачи")
+                                  }
+                                }}
+                              >
+                                Детали
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
+        {/* ----------------- ВКЛАДКА 4: МОНИТОРИНГ СООБЩЕНИЙ ----------------- */}
         <TabsContent value="monitor" className="space-y-4">
-          <MonitorTab
-            status={monitorStatus}
-            messages={monitoredMessages}
-            groupRows={monitorGroupRows}
-            loading={monitorResource.loading && !monitorResource.data}
-            error={monitorResource.error}
-            onRetry={reloadMonitor}
-            toggling={monitorToggling}
-            togglingGroupId={togglingMonitorGroupId}
-            onToggleMonitor={() => void handleToggleMonitor()}
-            onToggleGroup={(conversationId, enabled) =>
-              void handleToggleMonitorGroup(conversationId, enabled)
-            }
-          />
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <RadioIcon className="size-5 text-indigo-600 dark:text-indigo-400" />
+                    <CardTitle className="text-base font-semibold">Мониторинг сообщений</CardTitle>
+                    {monitorStatus?.liveWatch ? (
+                      <Badge className="gap-1.5 bg-emerald-600 font-normal text-white hover:bg-emerald-600">
+                        <span className="inline-block size-2 animate-pulse rounded-full bg-white" />
+                        Обновление в реальном времени
+                      </Badge>
+                    ) : null}
+                    {monitorStatus?.isRunning ? (
+                      <Badge variant="outline" className="font-normal">Опрос активен</Badge>
+                    ) : (
+                      <Badge variant="secondary" className="font-normal">Опрос остановлен</Badge>
+                    )}
+                  </div>
+                  <CardDescription className="text-xs mt-0.5">
+                    Включайте нужные группы. Новые сообщения появляются автоматически, включая пропущенные во время перезапуска сервиса.
+                  </CardDescription>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={handleToggleMonitor}
+                    disabled={monitorToggling || monitorLoading}
+                    variant={monitorStatus?.isRunning ? "destructive" : "default"}
+                    className="gap-2 text-xs sm:text-sm"
+                  >
+                    {monitorToggling ? (
+                      <Loader2Icon className="size-4 animate-spin" />
+                    ) : monitorStatus?.isRunning ? (
+                      <SquareIcon className="size-4" />
+                    ) : (
+                      <PlayIcon className="size-4" />
+                    )}
+                    {monitorStatus?.isRunning ? "Остановить опрос" : "Запустить опрос"}
+                  </Button>
+
+                  <Button asChild variant="outline" size="sm" className="gap-1.5 text-xs h-9">
+                    <Link href="/dashboard/stream">
+                      <ExternalLinkIcon className="size-3.5" />
+                      <span>Открыть ленту</span>
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-3">
+                <div className="rounded-lg border bg-card/60 p-3.5">
+                  <span className="text-xs font-medium text-muted-foreground block">Обработано сообщений</span>
+                  <p className="text-2xl font-bold font-mono tabular-nums mt-1">
+                    {monitorStatus?.processedMessagesCount ?? 0}
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">Получено автоматически</span>
+                </div>
+
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3.5">
+                  <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400 block">
+                    Номера из текста сообщений
+                  </span>
+                  <p className="text-2xl font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400 mt-1">
+                    {monitorStatus?.phonesFromTextCount ?? 0}
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">Определены автоматически</span>
+                </div>
+
+                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3.5">
+                  <span className="text-xs font-medium text-blue-700 dark:text-blue-400 block">
+                    Номера из профилей
+                  </span>
+                  <p className="text-2xl font-bold font-mono tabular-nums text-blue-600 dark:text-blue-400 mt-1">
+                    {monitorStatus?.phonesFromViberCount ?? 0}
+                  </p>
+                  <span className="text-[11px] text-muted-foreground">Получены автоматически</span>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-xs font-medium">Группы</span>
+                <div className="max-h-56 overflow-y-auto rounded-lg border">
+                  {monitorGroupRows.length === 0 ? (
+                    groupsError ? (
+                      <p className="p-3 text-xs text-destructive">Инстанс недоступен: {groupsError}</p>
+                    ) : (
+                      <p className="p-3 text-xs text-muted-foreground">Нет доступных групп.</p>
+                    )
+                  ) : (
+                    <ul className="divide-y">
+                      {monitorGroupRows.map((row) => (
+                        <li key={row.conversationId} className="flex min-h-11 items-center gap-3 px-3 py-1">
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium">{row.name}</span>
+                            {row.missingOnDevice ? (
+                              <span className="block text-[11px] text-amber-600 dark:text-amber-400">
+                                {MONITOR_MISSING_ON_DEVICE_HINT}
+                              </span>
+                            ) : null}
+                          </span>
+                          {togglingMonitorGroupId === row.conversationId ? (
+                            <Loader2Icon className="size-4 shrink-0 animate-spin text-muted-foreground" />
+                          ) : null}
+                          <Switch
+                            checked={row.enabled}
+                            disabled={
+                              togglingMonitorGroupId === row.conversationId ||
+                              (row.missingOnDevice && !row.enabled)
+                            }
+                            onCheckedChange={(checked) =>
+                              void handleToggleMonitorGroup(row.conversationId, checked, row.groupKey)
+                            }
+                            aria-label={`${row.enabled ? "Выключить" : "Включить"} мониторинг ${row.name}`}
+                          />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs font-medium">
+                  <span>Недавние сообщения</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 text-xs text-muted-foreground"
+                    onClick={() => void refreshMonitor()}
+                  >
+                    Обновить
+                  </Button>
+                </div>
+
+                {monitoredMessages.length === 0 ? (
+                  <div className="py-8 text-center text-xs text-muted-foreground border rounded-lg">
+                    Пока нет сообщений. Включите группу, чтобы начать мониторинг.
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {monitoredMessages.slice(0, 8).map((msg) => (
+                      <div key={msg.id} className="rounded-lg border bg-card p-3 text-xs space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold text-foreground">
+                            {msg.conversationName || `Чат ${msg.conversationId}`}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            {messageHasMedia(msg) ? (
+                              <Badge variant="outline" className="gap-1 text-[10px]">
+                                <ImageIcon className="size-3" />
+                                Фото
+                              </Badge>
+                            ) : null}
+                            {msg.attachedPhone ? (
+                              <Badge
+                                variant="outline"
+                                className={`font-mono text-[10px] ${
+                                  msg.phoneSource === "message_text"
+                                    ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 font-bold"
+                                    : "border-blue-500/40 text-blue-700 dark:text-blue-400 bg-blue-500/10"
+                                }`}
+                              >
+                                {msg.attachedPhone} ({msg.phoneSource === "message_text" ? "текст" : "профиль"})
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] text-muted-foreground">
+                                Без номера
+                              </Badge>
+                            )}
+                            <span className="text-[10px] text-muted-foreground tabular-nums">
+                              {new Date(msg.date).toLocaleTimeString("ru-RU")}
+                            </span>
+                          </div>
+                        </div>
+                        <p className="text-muted-foreground text-[11px] whitespace-pre-wrap line-clamp-2">
+                          {messagePreviewText(msg) || (messageHasMedia(msg) ? "Фото" : "—")}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Модальное окно деталей задачи из истории */}
+      <Dialog open={historyTaskModalOpen} onOpenChange={setHistoryTaskModalOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <span>Задача {selectedHistoryTask?.id}</span>
+              {selectedHistoryTask && (
+                <Badge
+                  variant={taskStatusBadge[selectedHistoryTask.status]?.variant ?? "secondary"}
+                  className="text-xs"
+                >
+                  {taskStatusBadge[selectedHistoryTask.status]?.label ?? selectedHistoryTask.status}
+                </Badge>
+              )}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Цель: {selectedHistoryTask?.groupName || selectedHistoryTask?.groupTarget} (ID {selectedHistoryTask?.conversationId})
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedHistoryTask && (
+            <div className="space-y-4 text-xs">
+              {/* История шагов */}
+              <div className="space-y-1.5">
+                <span className="font-semibold text-foreground">Пройденные шаги:</span>
+                <div className="space-y-1.5 max-h-64 overflow-y-auto border rounded-lg p-2.5">
+                  {selectedHistoryTask.stepHistory.map((s, i) => {
+                    const stepKey = extractStepName(s.step || s)
+                    const stepTitle = STEP_LABELS[stepKey]?.title || `Этап ${i + 1}`
+                    return (
+                      <div key={i} className="flex items-center justify-between py-1 border-b last:border-0">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2Icon className="size-3.5 text-emerald-600" />
+                          <span className="font-medium text-foreground">
+                            {stepTitle}
+                          </span>
+                        </div>
+                        <span className="font-mono text-muted-foreground">
+                          {s.durationMs ? `${(s.durationMs / 1000).toFixed(1)} сек` : "—"}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {selectedHistoryTask.result && (
+                <div className="rounded-lg border bg-muted/40 p-3 space-y-1">
+                  <div className="font-semibold text-foreground">Итоговый отчет:</div>
+                  <div className="grid grid-cols-2 gap-2 text-muted-foreground pt-1">
+                    <div>Всего участников: <span className="font-bold text-foreground">{selectedHistoryTask.result.participantsCount}</span></div>
+                    <div>С номерами телефонов: <span className="font-bold text-foreground">{selectedHistoryTask.result.participantsWithPhone}</span></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
