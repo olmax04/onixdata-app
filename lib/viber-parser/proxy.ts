@@ -171,6 +171,13 @@ export type ProxyRouteKind =
   | "monitor-group-toggle"
   | "online-status"
   | "broadcast"
+  | "auth-phone"
+  | "auth-code"
+  | "viber-status"
+  | "viber-start"
+  | "users"
+  | "users-sync-group"
+  | "users-sync-task"
 
 export interface ProxyMatch {
   kind: ProxyRouteKind
@@ -263,12 +270,23 @@ export function matchProxyRoute(method: ProxyMethod, pathParts: string[]): Proxy
     if (parts[0] === "tasks" && parts.length === 3 && parts[1] && parts[2] === "participants") {
       return { kind: "task-participants", params: { id: parts[1] } }
     }
+    if (route === "viber/status") return { kind: "viber-status" }
+    if (route === "users") return { kind: "users" }
     return null
   }
 
   if (method === "POST") {
     if (route === "start") return { kind: "start" }
     if (route === "stop") return { kind: "stop" }
+    if (route === "auth/phone") return { kind: "auth-phone" }
+    if (route === "auth/code") return { kind: "auth-code" }
+    if (route === "viber/start") return { kind: "viber-start" }
+    if (parts[0] === "users" && parts[1] === "sync" && parts[2] === "group" && parts[3]) {
+      return { kind: "users-sync-group", params: { id: parts[3] } }
+    }
+    if (parts[0] === "users" && parts[1] === "sync" && parts[2] === "task" && parts[3]) {
+      return { kind: "users-sync-task", params: { id: parts[3] } }
+    }
     if (route === "participants/collect" || route === "collect") return { kind: "collect" }
     if (route === "participants/online-status") return { kind: "online-status" }
     if (route === "database/decode" || route === "participants/decode") return { kind: "decode" }

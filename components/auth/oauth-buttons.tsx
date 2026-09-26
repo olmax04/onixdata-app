@@ -40,11 +40,29 @@ function GitHubIcon() {
   )
 }
 
+import * as React from "react"
+import { useAuth } from "@/lib/supabase/auth-context"
+
 export function OAuthButtons({ className }: { className?: string }) {
-  const notifyDemo = (provider: string) => {
-    toast("Демо: OAuth не подключён", {
-      description: `Вход через ${provider} в этом прототипе не выполняется.`,
-    })
+  const { signInWithOAuth } = useAuth()
+  const [loadingProvider, setLoadingProvider] = React.useState<"google" | "github" | null>(null)
+
+  const handleOAuth = async (provider: "google" | "github") => {
+    setLoadingProvider(provider)
+    try {
+      const { error } = await signInWithOAuth(provider)
+      if (error) {
+        toast.error(`Ошибка входа через ${provider}`, {
+          description: error.message || "Провайдер не настроен в Supabase.",
+        })
+      }
+    } catch (err: unknown) {
+      toast.error(`Ошибка OAuth`, {
+        description: err instanceof Error ? err.message : "Неизвестная ошибка",
+      })
+    } finally {
+      setLoadingProvider(null)
+    }
   }
 
   return (
@@ -52,20 +70,22 @@ export function OAuthButtons({ className }: { className?: string }) {
       <Button
         type="button"
         variant="outline"
+        disabled={loadingProvider !== null}
         className={cn("h-11 bg-transparent hover:bg-accent", authPress)}
-        onClick={() => notifyDemo("Google")}
+        onClick={() => handleOAuth("google")}
       >
         <GoogleIcon />
-        Google
+        {loadingProvider === "google" ? "Подключение..." : "Google"}
       </Button>
       <Button
         type="button"
         variant="outline"
+        disabled={loadingProvider !== null}
         className={cn("h-11 bg-transparent hover:bg-accent", authPress)}
-        onClick={() => notifyDemo("GitHub")}
+        onClick={() => handleOAuth("github")}
       >
         <GitHubIcon />
-        GitHub
+        {loadingProvider === "github" ? "Подключение..." : "GitHub"}
       </Button>
     </div>
   )

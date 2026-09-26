@@ -3,6 +3,8 @@ import { Inter_Tight } from "next/font/google"
 
 import { Toaster } from "@/components/ui/sonner"
 
+import { AuthProvider } from "@/lib/supabase/auth-context"
+
 import "./globals.css"
 
 const interTight = Inter_Tight({
@@ -29,7 +31,9 @@ export default function RootLayout({
   return (
     <html lang="ru" className="dark" suppressHydrationWarning>
       <body className={`${interTight.variable} font-sans antialiased`}>
-        {children}
+        <AuthProvider>
+          {children}
+        </AuthProvider>
         <Toaster position="top-right" richColors closeButton />
       </body>
     </html>

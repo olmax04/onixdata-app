@@ -21,10 +21,12 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { currentUser, notificationsCount } from "@/lib/mock-data"
+import { useAuth } from "@/lib/supabase/auth-context"
 import { cn } from "@/lib/utils"
 
 export function Topbar({ title }: { title: string }) {
   const router = useRouter()
+  const { user, signOut: authSignOut } = useAuth()
   const [query, setQuery] = React.useState("")
 
   const search = (event: React.FormEvent<HTMLFormElement>) => {
@@ -34,12 +36,30 @@ export function Topbar({ title }: { title: string }) {
     })
   }
 
-  const signOut = () => {
-    toast("Вы вышли из аккаунта", {
-      description: "Демо-режим: сессии не существует.",
-    })
-    router.push("/login")
+  const signOut = async () => {
+    try {
+      await authSignOut()
+      toast.success("Вы вышли из аккаунта")
+      router.push("/login")
+    } catch {
+      router.push("/login")
+    }
   }
+
+  const displayName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    currentUser.name
+
+  const displayEmail = user?.email || currentUser.email
+
+  const initials = displayName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part: string) => part[0]?.toUpperCase() ?? "")
+    .join("") || currentUser.initials
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/80 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -118,7 +138,7 @@ export function Topbar({ title }: { title: string }) {
               >
                 <Avatar className="size-8">
                   <AvatarFallback className="text-xs font-medium">
-                    {currentUser.initials}
+                    {initials}
                   </AvatarFallback>
                 </Avatar>
               </Button>
@@ -126,10 +146,10 @@ export function Topbar({ title }: { title: string }) {
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuLabel className="font-normal">
                 <span className="block text-sm font-medium">
-                  {currentUser.name}
+                  {displayName}
                 </span>
                 <span className="block text-xs text-muted-foreground">
-                  {currentUser.email}
+                  {displayEmail}
                 </span>
               </DropdownMenuLabel>
               <DropdownMenuSeparator />

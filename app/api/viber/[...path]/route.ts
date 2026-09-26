@@ -499,6 +499,10 @@ async function dispatchGet(request: NextRequest, match: ProxyMatch, search: stri
         {},
         "Бэкенд не поддерживает рассылку"
       )
+    case "viber-status":
+      return passthroughJson(request, "/api/viber/status", {}, "Не удалось получить статус Viber")
+    case "users":
+      return passthroughJson(request, `/api/users${search}`, {}, "Не удалось получить список пользователей")
     default:
       return jsonError("Маршрут не поддерживается", 404)
   }
@@ -510,6 +514,41 @@ async function dispatchPost(request: NextRequest, match: ProxyMatch, search: str
       return NextResponse.json({ message: "Сессия активна и готова к сбору" })
     case "stop":
       return handleStopAll(request)
+    case "auth-phone":
+      return passthroughJson(
+        request,
+        "/api/auth/phone",
+        { method: "POST", rawBody: (await request.text()) || "{}" },
+        "Не удалось отправить номер телефона"
+      )
+    case "auth-code":
+      return passthroughJson(
+        request,
+        "/api/auth/code",
+        { method: "POST", rawBody: (await request.text()) || "{}" },
+        "Не удалось подтвердить код активации"
+      )
+    case "viber-start":
+      return passthroughJson(
+        request,
+        "/api/viber/start",
+        { method: "POST", rawBody: (await request.text()) || "{}" },
+        "Не удалось запустить Viber"
+      )
+    case "users-sync-group":
+      return passthroughJson(
+        request,
+        `/api/users/sync/group/${encodeURIComponent(match.params?.id ?? "")}`,
+        { method: "POST" },
+        "Не удалось синхронизировать участников группы"
+      )
+    case "users-sync-task":
+      return passthroughJson(
+        request,
+        `/api/users/sync/task/${encodeURIComponent(match.params?.id ?? "")}`,
+        { method: "POST" },
+        "Не удалось синхронизировать участников задачи"
+      )
     case "task-stop":
       return passthroughJson(
         request,

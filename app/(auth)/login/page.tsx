@@ -30,6 +30,10 @@ import {
 } from "@/components/ui/form"
 import { IconInput, PasswordInput } from "@/components/ui/icon-input"
 
+import * as React from "react"
+import { useAuth } from "@/lib/supabase/auth-context"
+import { Loader2Icon } from "lucide-react"
+
 const loginSchema = z.object({
   email: z
     .string()
@@ -43,19 +47,35 @@ type LoginValues = z.infer<typeof loginSchema>
 
 export default function LoginPage() {
   const router = useRouter()
+  const { signIn } = useAuth()
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
   const form = useForm<LoginValues>({
     resolver: zodResolver(loginSchema),
     defaultValues: { email: "", password: "", remember: true },
   })
 
-  const onSubmit = (values: LoginValues) => {
-    toast.success("Вход выполнен", {
-      description: `Демо-режим: ${values.email}. Запомнить меня: ${
-        values.remember ? "да" : "нет"
-      }. Открываем дашборд.`,
-    })
-    router.push("/dashboard")
+  const onSubmit = async (values: LoginValues) => {
+    setIsSubmitting(true)
+    try {
+      const { error } = await signIn(values.email, values.password)
+      if (error) {
+        toast.error("Ошибка входа", {
+          description: error.message || "Неверный email или пароль",
+        })
+        return
+      }
+      toast.success("Вход выполнен", {
+        description: "Добро пожаловать в OnixData. Открываем дашборд.",
+      })
+      router.push("/dashboard")
+    } catch (err: unknown) {
+      toast.error("Не удалось выполнить вход", {
+        description: err instanceof Error ? err.message : "Неизвестная ошибка",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -145,13 +165,21 @@ export default function LoginPage() {
 
           <Button
             type="submit"
+            disabled={isSubmitting}
             className={cn(
               "h-11 w-full text-[0.95rem]",
               authPress,
               authEnter.submit
             )}
           >
-            Войти
+            {isSubmitting ? (
+              <>
+                <Loader2Icon className="mr-2 size-4 animate-spin" />
+                Вход...
+              </>
+            ) : (
+              "Войти"
+            )}
           </Button>
         </form>
       </Form>

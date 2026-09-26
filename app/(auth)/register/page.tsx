@@ -29,6 +29,10 @@ import {
 } from "@/components/ui/form"
 import { IconInput, PasswordInput } from "@/components/ui/icon-input"
 
+import * as React from "react"
+import { useAuth } from "@/lib/supabase/auth-context"
+import { Loader2Icon } from "lucide-react"
+
 const registerSchema = z
   .object({
     name: z.string().min(2, "Укажите имя (минимум 2 символа)"),
@@ -48,6 +52,8 @@ type RegisterValues = z.infer<typeof registerSchema>
 
 export default function RegisterPage() {
   const router = useRouter()
+  const { signUp } = useAuth()
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
 
   const form = useForm<RegisterValues>({
     resolver: zodResolver(registerSchema),
@@ -60,11 +66,36 @@ export default function RegisterPage() {
     },
   })
 
-  const onSubmit = (values: RegisterValues) => {
-    toast.success("Аккаунт создан", {
-      description: `Демо-режим: ${values.email}. Открываем дашборд.`,
-    })
-    router.push("/dashboard")
+  const onSubmit = async (values: RegisterValues) => {
+    setIsSubmitting(true)
+    try {
+      const { data, error } = await signUp(values.email, values.password, values.name)
+      if (error) {
+        toast.error("Ошибка при регистрации", {
+          description: error.message || "Не удалось создать аккаунт",
+        })
+        return
+      }
+
+      const res = data as { session?: unknown; user?: { identities?: unknown[] } } | null
+      if (res?.user && (!res.session || (Array.isArray(res.user.identities) && res.user.identities.length === 0))) {
+        toast.success("Регистрация успешна", {
+          description: "Проверьте почту для подтверждения аккаунта.",
+        })
+        router.push("/login")
+      } else {
+        toast.success("Аккаунт создан", {
+          description: `Добро пожаловать, ${values.name}! Открываем дашборд.`,
+        })
+        router.push("/dashboard")
+      }
+    } catch (err: unknown) {
+      toast.error("Не удалось создать аккаунт", {
+        description: err instanceof Error ? err.message : "Неизвестная ошибка",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   /*
@@ -185,13 +216,21 @@ export default function RegisterPage() {
 
           <Button
             type="submit"
+            disabled={isSubmitting}
             className={cn(
               "h-11 w-full text-[0.95rem]",
               authPress,
               authEnter.submit
             )}
           >
-            Создать аккаунт
+            {isSubmitting ? (
+              <>
+                <Loader2Icon className="mr-2 size-4 animate-spin" />
+                Создание аккаунта...
+              </>
+            ) : (
+              "Создать аккаунт"
+            )}
           </Button>
         </form>
       </Form>

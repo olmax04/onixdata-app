@@ -27,6 +27,9 @@ import {
 } from "@/components/ui/form"
 import { IconInput } from "@/components/ui/icon-input"
 
+import { useAuth } from "@/lib/supabase/auth-context"
+import { Loader2Icon } from "lucide-react"
+
 const forgotSchema = z.object({
   email: z.string().min(1, "Укажите email").email("Введите корректный email"),
 })
@@ -34,6 +37,8 @@ const forgotSchema = z.object({
 type ForgotValues = z.infer<typeof forgotSchema>
 
 export default function ForgotPasswordPage() {
+  const { resetPassword } = useAuth()
+  const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [sentTo, setSentTo] = React.useState<string | null>(null)
   const successHeadingRef = React.useRef<HTMLHeadingElement>(null)
   const emailInputRef = React.useRef<HTMLInputElement | null>(null)
@@ -70,11 +75,27 @@ export default function ForgotPasswordPage() {
     }
   }, [sentTo])
 
-  const onSubmit = (values: ForgotValues) => {
-    setSentTo(values.email)
-    toast.success("Ссылка отправлена", {
-      description: "Демо-режим: письмо реально не отправляется.",
-    })
+  const onSubmit = async (values: ForgotValues) => {
+    setIsSubmitting(true)
+    try {
+      const { error } = await resetPassword(values.email)
+      if (error) {
+        toast.error("Ошибка при отправке ссылки", {
+          description: error.message || "Не удалось отправить письмо для сброса",
+        })
+        return
+      }
+      setSentTo(values.email)
+      toast.success("Ссылка отправлена", {
+        description: "Проверьте почту для перехода к сбросу пароля.",
+      })
+    } catch (err: unknown) {
+      toast.error("Не удалось отправить ссылку", {
+        description: err instanceof Error ? err.message : "Неизвестная ошибка",
+      })
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   if (sentTo) {
@@ -158,7 +179,7 @@ export default function ForgotPasswordPage() {
                   />
                 </FormControl>
                 <FormDescription>
-                  Демо-режим: письмо реально не отправляется.
+                  На указанный адрес придет письмо со ссылкой для восстановления.
                 </FormDescription>
                 <FormMessage className={authFormMessage} />
               </FormItem>
@@ -167,13 +188,21 @@ export default function ForgotPasswordPage() {
 
           <Button
             type="submit"
+            disabled={isSubmitting}
             className={cn(
               "h-11 w-full text-[0.95rem]",
               authPress,
               enter(authEnter.submit)
             )}
           >
-            Отправить ссылку
+            {isSubmitting ? (
+              <>
+                <Loader2Icon className="mr-2 size-4 animate-spin" />
+                Отправка...
+              </>
+            ) : (
+              "Отправить ссылку"
+            )}
           </Button>
         </form>
       </Form>
