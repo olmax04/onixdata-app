@@ -511,12 +511,19 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
     // 12. Monitored Messages list: /api/viber/messages/monitored
     if (route === "messages/monitored") {
-      const res = await fetch(`${origin}/api/messages/monitored${search}`, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-      })
-      const data = await res.json()
-      return NextResponse.json(data, { status: res.status })
+      try {
+        const res = await fetch(`${origin}/api/messages/monitored${search}`, {
+          cache: "no-store",
+          signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          return NextResponse.json(data, { status: res.status })
+        }
+      } catch {
+        // upstream error
+      }
+      return NextResponse.json([])
     }
 
     // 13. Messages monitor status: /api/viber/messages/monitor/status
