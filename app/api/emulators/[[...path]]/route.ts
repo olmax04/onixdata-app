@@ -16,6 +16,32 @@ function parserOrigin() {
   return url.origin
 }
 
+function agentOrigin() {
+  const configured = process.env.EMULATOR_AGENT_URL?.trim() || process.env.VPS_AGENT_URL?.trim()
+  if (configured) {
+    try {
+      const url = new URL(configured)
+      return url.origin
+    } catch {}
+  }
+  try {
+    const parser = new URL(parserOrigin())
+    return `${parser.protocol}//${parser.hostname}:9000`
+  } catch {
+    return "http://136.92.24.88:9000"
+  }
+}
+
+const AGENT_SECRET = process.env.VPS_AGENT_SECRET || "viber-secret-agent-token"
+
+function agentHeaders(extra?: Record<string, string>): Record<string, string> {
+  const h: Record<string, string> = {
+    "x-agent-secret": AGENT_SECRET,
+    ...extra,
+  }
+  return h
+}
+
 interface ViberAccountDto {
   phoneNumber?: string | null
   displayName?: string | null
@@ -85,13 +111,39 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const pathParts = context.params.path || []
   const subPath = pathParts.length > 0 ? `/${pathParts.join("/")}` : ""
   const origin = parserOrigin()
+  const agentUrl = agentOrigin()
   const host = new URL(origin).hostname
   const search = request.nextUrl.search
 
+  // 1. Try emulator-agent directly
+  try {
+    const agentRes = await fetch(`${agentUrl}/api/emulators${subPath}${search}`, {
+      headers: agentHeaders(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    })
+
+    if (agentRes.ok) {
+      const contentType = agentRes.headers.get("content-type") || ""
+      if (contentType.includes("application/json")) {
+        const data = await agentRes.json()
+        return NextResponse.json(data, { status: agentRes.status })
+      }
+      const text = await agentRes.text()
+      return new NextResponse(text, {
+        status: agentRes.status,
+        headers: { "Content-Type": contentType },
+      })
+    }
+  } catch {
+    // Agent not reachable, fallback to parser API or virtual instance
+  }
+
+  // 2. Try parser API upstream
   try {
     const upstream = await fetch(`${origin}/api/emulators${subPath}${search}`, {
       cache: "no-store",
-      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      signal: AbortSignal.timeout(5000),
     })
 
     if (upstream.ok) {
@@ -110,7 +162,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     // Upstream doesn't implement /api/emulators or is unreachable -> fallback to virtual instance
   }
 
-  // Fallback for current API version without multi-instance service:
+  // 3. Fallback for standalone/local view without multi-instance service:
   if (pathParts.length === 0) {
     const viberStatus = await getViberEngineStatus(origin)
     return NextResponse.json({
@@ -146,10 +198,41 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const pathParts = context.params.path || []
   const subPath = pathParts.length > 0 ? `/${pathParts.join("/")}` : ""
   const origin = parserOrigin()
+  const agentUrl = agentOrigin()
   const search = request.nextUrl.search
 
   try {
     const bodyText = await request.text()
+
+    // 1. Try emulator-agent directly
+    try {
+      const agentRes = await fetch(`${agentUrl}/api/emulators${subPath}${search}`, {
+        method: "POST",
+        headers: agentHeaders({
+          "Content-Type": request.headers.get("content-type") || "application/json",
+        }),
+        body: bodyText || undefined,
+        cache: "no-store",
+        signal: AbortSignal.timeout(30_000),
+      })
+
+      if (agentRes.ok) {
+        const contentType = agentRes.headers.get("content-type") || ""
+        if (contentType.includes("application/json")) {
+          const data = await agentRes.json()
+          return NextResponse.json(data, { status: agentRes.status })
+        }
+        const text = await agentRes.text()
+        return new NextResponse(text, {
+          status: agentRes.status,
+          headers: { "Content-Type": contentType },
+        })
+      }
+    } catch {
+      // Agent error, try parser or fallback
+    }
+
+    // 2. Try parser API upstream
     const upstream = await fetch(`${origin}/api/emulators${subPath}${search}`, {
       method: "POST",
       headers: {
@@ -173,11 +256,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       })
     }
   } catch {
-    // Upstream doesn't implement /api/emulators
+    // Fallback
   }
 
   // Fallback commands for the connected engine:
-  // 1. Start Viber process
   if (subPath.includes("viber/start") || subPath.endsWith("/start")) {
     try {
       const startRes = await fetch(`${origin}/api/viber/start`, {
@@ -195,7 +277,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
   }
 
-  // 2. Stop Viber
   if (subPath.endsWith("/stop")) {
     try {
       const tasksRes = await fetch(`${origin}/api/tasks`, { cache: "no-store" })
@@ -211,7 +292,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Процессы сбора остановлены" })
   }
 
-  // 3. Restart Viber
   if (subPath.endsWith("/restart")) {
     try {
       await fetch(`${origin}/api/viber/start`, {
@@ -225,16 +305,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Инстанс перезапущен" })
   }
 
-  // 4. Create new emulator request
-  if (pathParts.length === 0) {
-    return NextResponse.json(
-      {
-        message: "В текущей версии API подключен основной инстанс (worker). Поддержка добавления множества инстансов находится в разработке.",
-      },
-      { status: 200 }
-    )
-  }
-
   return NextResponse.json(
     { error: "Команда не поддерживается" },
     { status: 400 }
@@ -245,8 +315,31 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
   const pathParts = context.params.path || []
   const subPath = pathParts.length > 0 ? `/${pathParts.join("/")}` : ""
   const origin = parserOrigin()
+  const agentUrl = agentOrigin()
   const search = request.nextUrl.search
 
+  // 1. Try emulator-agent directly
+  try {
+    const agentRes = await fetch(`${agentUrl}/api/emulators${subPath}${search}`, {
+      method: "DELETE",
+      headers: agentHeaders(),
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    })
+
+    if (agentRes.ok) {
+      const contentType = agentRes.headers.get("content-type") || ""
+      if (contentType.includes("application/json")) {
+        const data = await agentRes.json()
+        return NextResponse.json(data, { status: agentRes.status })
+      }
+      return new NextResponse(null, { status: agentRes.status })
+    }
+  } catch {
+    // Fallback
+  }
+
+  // 2. Try parser API upstream
   try {
     const upstream = await fetch(`${origin}/api/emulators${subPath}${search}`, {
       method: "DELETE",
