@@ -899,7 +899,12 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
                               </span>
                             ) : null}
                             <span className="min-w-0 break-words">
-                              {messagePreviewText(message) || (messageHasMedia(message) ? "" : "—")}
+                              {messagePreviewText(message) || (messageHasMedia(message) ? "" : (
+                                <span className="inline-flex items-center gap-1.5 rounded-md border border-dashed border-border/80 bg-muted/40 px-2 py-1 text-xs italic text-muted-foreground">
+                                  <span className="inline-block size-1.5 rounded-full bg-amber-500/70" />
+                                  Без текста (стикер / системное)
+                                </span>
+                              ))}
                             </span>
                           </span>
                         </TableCell>
