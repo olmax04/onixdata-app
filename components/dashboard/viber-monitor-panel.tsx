@@ -69,8 +69,31 @@ const STATUS_POLL_MS = 5000
 /** Инстанс по умолчанию — тот, на который смотрит ADB_HOST/ADB_PORT. */
 const DEFAULT_DEVICE_ID = "default"
 
+function isDefaultInstance(id?: string | null): boolean {
+  if (!id) return true
+  const n = id.trim().toLowerCase()
+  return (
+    n === "default" ||
+    n === "worker" ||
+    n === "worker-1" ||
+    n === "android-emulator" ||
+    n === "emulator-5554" ||
+    n === "main" ||
+    n === "emulator"
+  )
+}
+
+function normalizeInstance(id?: string | null): string {
+  return isDefaultInstance(id) ? DEFAULT_DEVICE_ID : id!.trim()
+}
+
+function instancesMatch(a?: string | null, b?: string | null): boolean {
+  if (isDefaultInstance(a) && isDefaultInstance(b)) return true
+  return normalizeInstance(a) === normalizeInstance(b)
+}
+
 function instanceOf(item: { deviceId?: string | null }): string {
-  return item.deviceId?.trim() || DEFAULT_DEVICE_ID
+  return normalizeInstance(item.deviceId)
 }
 
 function formatMsgTime(iso: string): string {
@@ -168,8 +191,7 @@ function buildGroupRows(
   monitored: MonitoredGroupDto[],
   deviceId?: string
 ): GroupRow[] {
-  const instance = deviceId?.trim() || DEFAULT_DEVICE_ID
-  const onInstance = monitored.filter((item) => instanceOf(item) === instance)
+  const onInstance = monitored.filter((item) => instancesMatch(item.deviceId, deviceId))
   const monitoredById = new Map(onInstance.map((item) => [item.conversationId, item]))
   const monitoredByKey = new Map(
     onInstance
@@ -306,6 +328,19 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
     }
   }, [withDevice])
 
+  const refreshMessages = React.useCallback(async () => {
+    try {
+      const list = await viberJson<MonitoredMessageDto[]>(
+        withDevice(`messages/monitored?limit=${MAX_ROWS}`)
+      )
+      if (Array.isArray(list)) {
+        setMessages((current) => mergeMessages(current, list))
+      }
+    } catch {
+      // ignore transient fetch errors
+    }
+  }, [withDevice])
+
   React.useEffect(() => {
     void loadInitial()
   }, [loadInitial])
@@ -313,30 +348,24 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
   React.useEffect(() => {
     const id = window.setInterval(() => {
       void refreshStatus().catch(() => undefined)
+      void refreshMessages().catch(() => undefined)
     }, STATUS_POLL_MS)
     return () => window.clearInterval(id)
-  }, [refreshStatus])
+  }, [refreshStatus, refreshMessages])
 
   React.useEffect(() => {
     let active = true
     const es = new EventSource("/api/viber/messages/events")
     es.onopen = () => {
       setIsLiveConnected(true)
-      void viberJson<MonitoredMessageDto[]>(withDevice(`messages/monitored?limit=${MAX_ROWS}`))
-        .then((list) => {
-          if (!active) return
-          setMessages((current) =>
-            mergeMessages(current, Array.isArray(list) ? list : [])
-          )
-        })
-        .catch(() => undefined)
+      void refreshMessages()
     }
     es.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data) as MonitoredMessageDto
         if (typeof raw?.id !== "number") return
-        // Поток общий для всех инстансов, панель показывает только свой.
-        if (instanceOf(raw) !== instance) return
+        // Поток общий для всех инстансов, панель показывает только свой (с учётом алиасов worker/default)
+        if (!instancesMatch(raw.deviceId, instance)) return
         setMessages((current) => mergeMessages(current, [raw]))
       } catch {
         // ignore keepalive / unparseable frames
@@ -347,12 +376,27 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
       active = false
       es.close()
     }
-  }, [instance, withDevice])
+  }, [instance, refreshMessages])
 
   const groupRows = React.useMemo(
     () => buildGroupRows(groups, status?.groups ?? [], instance),
     [groups, status?.groups, instance]
   )
+
+  const groupOptions = React.useMemo(() => {
+    const map = new Map<string, string>()
+    for (const g of groupRows) {
+      map.set(String(g.conversationId), g.name)
+    }
+    for (const m of messages) {
+      const id = String(m.conversationId)
+      if (!map.has(id)) {
+        map.set(id, m.conversationName || `Чат ${m.conversationId}`)
+      }
+    }
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }))
+  }, [groupRows, messages])
+
   const pollStale =
     status?.isRunning === true &&
     (!status.lastPollAt || Date.now() - new Date(status.lastPollAt).getTime() > 20_000)
@@ -364,7 +408,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
 
   const visible = messages.filter((message) => {
     if (sourceFilter !== "all") {
-      const selectedGroup = groupRows.find((g) => String(g.conversationId) === sourceFilter)
+      const selectedGroup = groupOptions.find((g) => g.id === sourceFilter)
       const matchesId = String(message.conversationId) === sourceFilter
       const matchesName =
         selectedGroup &&
@@ -651,7 +695,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
               <div className="rounded-lg border bg-card/60 p-3.5">
                 <span className="block text-xs font-medium text-muted-foreground">Обработано</span>
                 <p className="mt-1 font-mono text-2xl font-bold tabular-nums">
-                  {status?.processedMessagesCount ?? 0}
+                  {Math.max(status?.processedMessagesCount ?? 0, messages.length)}
                 </p>
               </div>
               <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3.5">
@@ -659,7 +703,10 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
                   Номера из текста
                 </span>
                 <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                  {status?.phonesFromTextCount ?? 0}
+                  {Math.max(
+                    status?.phonesFromTextCount ?? 0,
+                    messages.filter((m) => m.phoneSource === "message_text").length
+                  )}
                 </p>
               </div>
               <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3.5">
@@ -667,7 +714,10 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
                   Номера из профиля
                 </span>
                 <p className="mt-1 font-mono text-2xl font-bold tabular-nums text-blue-600 dark:text-blue-400">
-                  {status?.phonesFromViberCount ?? 0}
+                  {Math.max(
+                    status?.phonesFromViberCount ?? 0,
+                    messages.filter((m) => m.phoneSource === "viber_profile").length
+                  )}
                 </p>
               </div>
             </div>
@@ -700,8 +750,8 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Все группы</SelectItem>
-                    {groupRows.map((row) => (
-                      <SelectItem key={row.conversationId} value={String(row.conversationId)}>
+                    {groupOptions.map((row) => (
+                      <SelectItem key={row.id} value={row.id}>
                         {row.name}
                       </SelectItem>
                     ))}
@@ -761,14 +811,18 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
                   {visible.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={5} className="py-10 text-center text-sm text-muted-foreground">
-                        {enabledCount === 0
-                          ? "Включите группу слева, чтобы начать мониторинг."
+                        {loading && messages.length === 0
+                          ? "Загрузка сообщений из базы данных…"
+                          : messages.length === 0
+                          ? enabledCount === 0
+                            ? "В базе данных пока нет сообщений для этого инстанса. Включите группу слева, чтобы начать мониторинг."
+                            : "В базе данных пока нет сохранённых сообщений для этого инстанса."
                           : "Пока нет сообщений под выбранные фильтры."}
                       </TableCell>
                     </TableRow>
                   ) : (
                     pageRows.map((message) => (
-                      <TableRow key={message.id}>
+                      <TableRow key={messageKey(message)}>
                         <TableCell className="whitespace-nowrap font-mono text-xs tabular-nums text-muted-foreground">
                           {formatMsgTime(message.date)}
                         </TableCell>
