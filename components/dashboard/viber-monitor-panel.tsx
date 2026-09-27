@@ -436,7 +436,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
     setPollerBusy(true)
     try {
       if (status?.isRunning) {
-        const next = await viberJson<MessageMonitorStatusDto>("messages/monitor/stop", { method: "POST" })
+        const next = await viberJson<MessageMonitorStatusDto>(withDevice("messages/monitor/stop"), { method: "POST" })
         setStatus({ ...next, groups: next.groups ?? [], liveWatch: next.liveWatch ?? false })
         toast.info("Опрос остановлен. Курсоры групп сохранены.")
       } else {

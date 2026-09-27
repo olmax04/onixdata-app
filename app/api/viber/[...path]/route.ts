@@ -836,7 +836,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
     // 8. Messages monitor stop: /api/viber/messages/monitor/stop
     if (route === "messages/monitor/stop") {
-      const res = await fetch(`${origin}/api/messages/monitor/stop`, { method: "POST" })
+      const res = await fetch(`${origin}/api/messages/monitor/stop${search}`, { method: "POST" })
       const data = await res.json()
       return NextResponse.json(data, { status: res.status })
     }
