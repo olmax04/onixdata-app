@@ -449,6 +449,39 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
     groupKey: string | null = null
   ) => {
     setTogglingId(conversationId)
+    // Оптимистичное обновление UI: сразу переключаем тумблер в интерфейсе
+    const prevStatus = status
+    setStatus((current) => {
+      if (!current) return current
+      const existingIdx = (current.groups ?? []).findIndex(
+        (g) => g.conversationId === conversationId
+      )
+      let nextGroups: MonitoredGroupDto[]
+      if (existingIdx >= 0) {
+        nextGroups = (current.groups ?? []).map((g, idx) =>
+          idx === existingIdx ? { ...g, enabled } : g
+        )
+      } else {
+        const matchingGroup = groups.find((g) => g.id === conversationId)
+        nextGroups = [
+          ...(current.groups ?? []),
+          {
+            conversationId,
+            name: matchingGroup?.name ?? null,
+            enabled,
+            lastMessageId: 0,
+            groupKey: groupKey ?? (matchingGroup?.groupId ? String(matchingGroup.groupId) : null),
+            deviceId: instance,
+          },
+        ]
+      }
+      return {
+        ...current,
+        isRunning: enabled ? true : current.isRunning,
+        groups: nextGroups,
+      }
+    })
+
     try {
       // На enable инстанс и глобальный ключ идут телом: сервер сам подменит
       // чужой локальный ID на тот, что реально есть на этом эмуляторе.
@@ -469,6 +502,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
       })
       toast.success(enabled ? "Группа включена в мониторинг" : "Группа снята с мониторинга")
     } catch (error) {
+      if (prevStatus) setStatus(prevStatus)
       toast.error("Не удалось изменить мониторинг группы", {
         description: error instanceof Error ? error.message : undefined,
       })
