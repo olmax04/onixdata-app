@@ -127,6 +127,43 @@ export async function GET(request: NextRequest, context: RouteContext) {
       const contentType = agentRes.headers.get("content-type") || ""
       if (contentType.includes("application/json")) {
         const data = await agentRes.json()
+        try {
+          const viberStatus = await getViberEngineStatus(origin)
+          if (data && data.emulators && Array.isArray(data.emulators)) {
+            data.emulators = data.emulators.map((emu: any) => {
+              const isMain =
+                emu.name === "android-emulator" ||
+                emu.containerName === "android-emulator" ||
+                emu.adbPort === 5555
+              const account = isMain ? viberStatus.account : null
+              const phone = account?.phoneNumber?.trim() || null
+              return {
+                ...emu,
+                setupStatus:
+                  emu.setupStatus ||
+                  (emu.bootCompleted
+                    ? {
+                        state: "ready",
+                        stage: "complete",
+                        updatedAt: new Date().toISOString(),
+                        exitCode: 0,
+                      }
+                    : null),
+                viberAccount:
+                  emu.viberAccount ||
+                  (phone
+                    ? {
+                        phoneNumber: phone,
+                        displayName: account?.displayName?.trim() || "Maks",
+                        status: account?.isAuthorized ? "authorized" : "pending",
+                        authorizedAt: new Date().toISOString(),
+                        source: "device",
+                      }
+                    : null),
+              }
+            })
+          }
+        } catch {}
         return NextResponse.json(data, { status: agentRes.status })
       }
       const text = await agentRes.text()
