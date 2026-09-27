@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-const DEFAULT_PARSER_URL = process.env.VIBER_PARSER_URL || "http://136.92.24.88:8080"
+const DEFAULT_PARSER_URL = process.env.VIBER_PARSER_URL || "http://127.0.0.1:8080"
 const UPSTREAM_TIMEOUT_MS = 65_000
 /**
  * Статус опрашивается каждые пару секунд, но сервис сбора занят работой с

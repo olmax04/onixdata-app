@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-const DEFAULT_PARSER_URL = process.env.VIBER_PARSER_URL || "http://136.92.24.88:8080"
+const DEFAULT_PARSER_URL = process.env.VIBER_PARSER_URL || "http://127.0.0.1:8080"
 const UPSTREAM_TIMEOUT_MS = 15_000
 
 interface RouteContext {
@@ -28,7 +28,7 @@ function agentOrigin() {
     const parser = new URL(parserOrigin())
     return `${parser.protocol}//${parser.hostname}:9000`
   } catch {
-    return "http://136.92.24.88:9000"
+    return "http://127.0.0.1:9000"
   }
 }
 
