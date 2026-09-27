@@ -462,7 +462,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
           idx === existingIdx ? { ...g, enabled } : g
         )
       } else {
-        const matchingGroup = groups.find((g) => g.id === conversationId)
+        const matchingGroup = groups.find((g) => g.conversationId === conversationId)
         nextGroups = [
           ...(current.groups ?? []),
           {
