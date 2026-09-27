@@ -332,9 +332,9 @@ export function OverviewDashboard() {
         groupId: g.groupKey,
         name: g.name,
         conversationType: 1,
-        memberCount: g.participantCount,
+        memberCount: g.participantCount ?? 0,
         messageCount: 0,
-        lastMessageDate: g.lastSyncedAt,
+        lastMessageDate: g.lastSyncedAt ?? null,
         onDevice: true,
       }))
     }

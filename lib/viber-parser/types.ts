@@ -382,9 +382,9 @@ export interface GroupSyncStatus {
   groupKey: string
   conversationId: number
   name: string
-  participantCount: number
-  activeMembers: number
-  inactiveMembers: number
+  participantCount?: number | null
+  activeMembers?: number | null
+  inactiveMembers?: number | null
   lastSyncedAt?: string | null
 }
 

@@ -232,10 +232,14 @@ export function SourcesTable() {
                         {group.groupKey}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm font-semibold">
-                        {group.participantCount.toLocaleString("ru-RU")}
+                        {group.participantCount != null
+                          ? group.participantCount.toLocaleString("ru-RU")
+                          : "—"}
                       </TableCell>
                       <TableCell className="text-right font-mono text-sm text-emerald-400">
-                        {group.activeMembers.toLocaleString("ru-RU")}
+                        {group.activeMembers != null
+                          ? group.activeMembers.toLocaleString("ru-RU")
+                          : "—"}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {formatDate(group.lastSyncedAt)}
