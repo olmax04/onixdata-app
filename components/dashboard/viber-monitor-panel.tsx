@@ -120,7 +120,8 @@ function filenameFromDisposition(header: string | null, fallback: string): strin
 }
 
 async function viberJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`/api/viber/${path}`, { cache: "no-store", ...init })
+  const signal = init?.signal ?? AbortSignal.timeout(15000)
+  const res = await fetch(`/api/viber/${path}`, { cache: "no-store", ...init, signal })
   const text = await res.text()
   let payload: { error?: string; message?: string } | T | null = null
   if (text) {
