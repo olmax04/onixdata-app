@@ -32,6 +32,7 @@ import type { BroadcastCampaign } from "@/lib/viber-parser/types"
 
 export interface BroadcastCampaignDialogProps {
   campaign: BroadcastCampaign | null
+  deviceId?: string
   groupRows: BroadcastGroupRow[]
   loadingGroups?: boolean
   open: boolean
@@ -41,6 +42,7 @@ export interface BroadcastCampaignDialogProps {
 
 export function BroadcastCampaignDialog({
   campaign,
+  deviceId,
   groupRows,
   loadingGroups = false,
   open,
@@ -94,7 +96,11 @@ export function BroadcastCampaignDialog({
 
     setSaving(true)
     try {
-      await viberJson<BroadcastCampaign>(`broadcast/campaigns/${campaign.id}`, {
+      const params = new URLSearchParams()
+      if (deviceId) params.set("deviceId", deviceId)
+      const query = params.toString()
+      const path = `broadcast/campaigns/${campaign.id}${query ? `?${query}` : ""}`
+      await viberJson<BroadcastCampaign>(path, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(patch),
