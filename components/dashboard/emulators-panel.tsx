@@ -49,7 +49,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { formatPhoneNumber, getEmulatorStatus, type EmulatorItem } from "@/lib/emulator-status"
+import { formatPhoneNumber, formatViberAccount, getEmulatorStatus, type EmulatorItem } from "@/lib/emulator-status"
 import { NewEmulatorDialog } from "./new-emulator-dialog"
 import { EmulatorScreenDialog, formatScrcpyStreamUrl } from "./emulator-screen-dialog"
 import { EmulatorLogsDialog } from "./emulator-logs-dialog"
@@ -217,6 +217,32 @@ export function EmulatorsPanel() {
       await fetchEmulators()
     } catch (err: any) {
       toast.error("Не удалось пересоздать инстанс", {
+        description: err.message || String(err),
+      })
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleLogout = async (emulator: EmulatorItem) => {
+    const account = formatViberAccount(emulator.viberAccount) || "текущий аккаунт"
+    if (!confirm(`Выйти из аккаунта Viber «${account}» на инстансе «${emulator.name}»?`)) {
+      return
+    }
+
+    setActionLoading(`logout-${emulator.id}`)
+    try {
+      const res = await fetch(`/api/emulators/${encodeURIComponent(emulator.id)}/viber/logout`, {
+        method: "POST",
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        throw new Error(data?.error || data?.message || "Ошибка выхода из Viber")
+      }
+      toast.success(data?.message || "Выход из Viber выполнен")
+      await fetchEmulators()
+    } catch (err: any) {
+      toast.error("Не удалось выйти из Viber", {
         description: err.message || String(err),
       })
     } finally {
@@ -393,6 +419,7 @@ export function EmulatorsPanel() {
                 onOpenScreen={(name, url, adbPort) => setScreenTarget({ name, url, adbPort })}
                 onOpenLogs={(id, name) => setLogsTarget({ id, name })}
                 onOpenAuth={(item) => setAuthTarget(item)}
+                onLogout={handleLogout}
                 actionLoading={actionLoading}
               />
             ))
@@ -432,7 +459,7 @@ export function EmulatorsPanel() {
               ) : (
                 emulators.map((emu) => {
                   const isRunning = emu.state === "running"
-                  const isWorking = actionLoading?.includes(emu.id)
+                  const isWorking = Boolean(actionLoading)
                   const status = getEmulatorStatus(emu)
                   const subtitle = status.stageLabel || status.description
 

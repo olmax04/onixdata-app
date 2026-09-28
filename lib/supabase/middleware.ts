@@ -59,9 +59,13 @@ export async function updateSession(request: NextRequest) {
     return redirectResponse
   }
 
-  // Protected API routes: /api/viber/*
+  // Protected API routes: /api/viber/* and /api/emulators/*
   // We only enforce auth in production or when Supabase keys are configured
-  if (!user && pathname.startsWith('/api/viber') && isSupabaseConfigured()) {
+  if (
+    !user &&
+    (pathname.startsWith('/api/viber') || pathname.startsWith('/api/emulators')) &&
+    isSupabaseConfigured()
+  ) {
     return NextResponse.json(
       { error: 'Unauthorized: требуется авторизация через Supabase' },
       { status: 401 }
