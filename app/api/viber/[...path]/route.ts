@@ -108,7 +108,12 @@ async function forwardUpstream(
     cache: "no-store",
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   }
-  if (method !== "DELETE") {
+  if (method === "DELETE") {
+    const parserSecret = process.env.VPS_AGENT_SECRET?.trim()
+    if (parserSecret) {
+      init.headers = { "x-parser-secret": parserSecret }
+    }
+  } else {
     const bodyText = await request.text()
     init.headers = {
       "Content-Type": request.headers.get("content-type") || "application/json",

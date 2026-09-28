@@ -379,6 +379,8 @@ export interface UsersPage {
 }
 
 export interface GroupSyncStatus {
+  id: string
+  instanceId: string
   groupKey: string
   conversationId: number
   name: string
@@ -386,6 +388,16 @@ export interface GroupSyncStatus {
   activeMembers?: number | null
   inactiveMembers?: number | null
   lastSyncedAt?: string | null
+}
+
+export interface GroupDeleteResult {
+  success: boolean
+  id: string
+  instanceId: string
+  groupKey: string
+  conversationId?: number | null
+  name?: string | null
+  message: string
 }
 
 export interface UsersSyncStatus {

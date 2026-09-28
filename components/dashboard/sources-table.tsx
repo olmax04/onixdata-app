@@ -11,6 +11,7 @@ import {
   MessageCircleIcon,
   RefreshCwIcon,
   ShieldCheckIcon,
+  Trash2Icon,
   UsersIcon,
 } from "lucide-react"
 import { toast } from "sonner"
@@ -51,6 +52,7 @@ export function SourcesTable() {
   const [syncStatus, setSyncStatus] = React.useState<UsersSyncStatus | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [syncingGroupId, setSyncingGroupId] = React.useState<number | null>(null)
+  const [deletingGroupId, setDeletingGroupId] = React.useState<string | null>(null)
   const [isSyncingAll, setIsSyncingAll] = React.useState(false)
 
   const loadData = React.useCallback(async () => {
@@ -96,6 +98,26 @@ export function SourcesTable() {
       toast.error(err instanceof Error ? err.message : "Ошибка при синхронизации")
     } finally {
       setIsSyncingAll(false)
+    }
+  }
+
+  const handleDeleteGroup = async (group: GroupSyncStatus) => {
+    const groupName = group.name || group.groupKey
+    const confirmed = confirm(
+      `Удалить группу «${groupName}» из Supabase?\n\n` +
+        "Сохранённые связи участников и сообщения мониторинга будут удалены. Пользователи останутся в базе."
+    )
+    if (!confirmed) return
+
+    setDeletingGroupId(group.id)
+    try {
+      const res = await viberApi.users.deleteGroup(group.id)
+      toast.success(`Группа «${res.name || groupName}» удалена из Supabase`)
+      await loadData()
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : `Не удалось удалить группу ${groupName}`)
+    } finally {
+      setDeletingGroupId(null)
     }
   }
 
@@ -171,7 +193,7 @@ export function SourcesTable() {
         <Button
           size="sm"
           onClick={handleSyncAll}
-          disabled={isSyncingAll}
+          disabled={isSyncingAll || syncingGroupId !== null || deletingGroupId !== null}
           className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground"
         >
           <RefreshCwIcon className={`size-4 ${isSyncingAll ? "animate-spin" : ""}`} />
@@ -215,10 +237,13 @@ export function SourcesTable() {
                 </TableRow>
               ) : (
                 groups.map((group) => {
+                  const groupName = group.name || group.groupKey
                   const isThisSyncing = syncingGroupId === group.conversationId
+                  const isThisDeleting = deletingGroupId === group.id
+                  const isGroupMutationRunning = syncingGroupId !== null || deletingGroupId !== null
 
                   return (
-                    <TableRow key={group.conversationId} className="border-sidebar-border/40 hover:bg-sidebar-accent/30">
+                    <TableRow key={group.id} className="border-sidebar-border/40 hover:bg-sidebar-accent/30">
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <MessageCircleIcon className="size-4 text-primary shrink-0" />
@@ -250,11 +275,28 @@ export function SourcesTable() {
                             variant="outline"
                             size="sm"
                             onClick={() => handleSyncGroup(group.conversationId, group.name)}
-                            disabled={isThisSyncing}
+                            disabled={isSyncingAll || isGroupMutationRunning}
                             className="h-8 text-xs gap-1.5"
                           >
                             <RefreshCwIcon className={`size-3.5 ${isThisSyncing ? "animate-spin" : ""}`} />
                             <span>{isThisSyncing ? "..." : "Синхронизировать"}</span>
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleDeleteGroup(group)}
+                            disabled={isSyncingAll || isGroupMutationRunning}
+                            aria-label={isThisDeleting ? `Удаление группы ${groupName}` : `Удалить группу ${groupName}`}
+                            title={`Удалить группу «${groupName}» из Supabase`}
+                            className="h-8 text-xs gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          >
+                            {isThisDeleting ? (
+                              <Loader2Icon className="size-3.5 animate-spin" />
+                            ) : (
+                              <Trash2Icon className="size-3.5" />
+                            )}
+                            <span>{isThisDeleting ? "Удаление..." : "Удалить"}</span>
                           </Button>
 
                           <Button

@@ -8,6 +8,7 @@ import type {
   CreateCampaignRequest,
   DatabaseStatsDto,
   DatabaseSyncResultDto,
+  GroupDeleteResult,
   GroupDetail,
   LoginRequest,
   LoginResponse,
@@ -162,6 +163,8 @@ export const viberApi = {
     syncAll: () => viberJson<UsersSyncAllResult>("users/sync/all", { method: "POST" }),
     syncGroup: (id: string | number) => viberJson<UsersSyncResult>(`users/sync/group/${id}`, { method: "POST" }),
     syncTask: (id: string) => viberJson<UsersSyncResult>(`users/sync/task/${id}`, { method: "POST" }),
+    deleteGroup: (id: string) =>
+      viberJson<GroupDeleteResult>(`users/groups/${encodeURIComponent(id)}`, { method: "DELETE" }),
   },
 
   // --- Message Monitoring ---

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { GET, POST } from "@/app/api/viber/[...path]/route"
+import { DELETE, GET, POST } from "@/app/api/viber/[...path]/route"
 
 const ORIGIN = "http://127.0.0.1:8080"
 
@@ -22,6 +22,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  delete process.env.VPS_AGENT_SECRET
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -203,6 +204,31 @@ describe("маршрутизация задач по инстансу", () => {
       `${ORIGIN}/api/tasks?deviceId=worker-03`,
       `${ORIGIN}/api/tasks/task_a/stop?deviceId=worker-03`,
     ])
+  })
+})
+
+describe("защищённые destructive запросы", () => {
+  it("добавляет server-side parser secret в DELETE", async () => {
+    process.env.VPS_AGENT_SECRET = "parser-service-secret"
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, id: "9007199254740993" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    )
+
+    await DELETE(
+      req("users/groups/9007199254740993"),
+      ctx("users/groups/9007199254740993")
+    )
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${ORIGIN}/api/users/groups/9007199254740993`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "x-parser-secret": "parser-service-secret" }),
+      })
+    )
   })
 })
 
