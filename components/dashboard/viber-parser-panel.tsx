@@ -89,6 +89,7 @@ import type {
   UsersSyncResult,
 } from "@/lib/viber-parser/types"
 import { messageHasMedia, messagePreviewText } from "@/lib/viber-parser/message-display"
+import { instanceUnavailableMessage } from "@/lib/viber-parser/public-error"
 import {
   applyTaskEvent,
   buildStepTimeline,
@@ -518,14 +519,14 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
   // 1a. Детали задачи: единственный источник полной истории шагов
   const fetchTaskDetail = React.useCallback(
     async (taskId: string, signal?: AbortSignal) => {
-      const detail = await request<TaskDetailDto>(`tasks/${taskId}`, {
+      const detail = await request<TaskDetailDto>(withDevice(`tasks/${taskId}`), {
         signal,
         timeoutMs: TASK_DETAIL_REQUEST_TIMEOUT_MS,
       })
       applyDetail(detail)
       return detail
     },
-    [applyDetail]
+    [applyDetail, withDevice]
   )
 
   const refreshTaskDetailQuiet = React.useCallback(
@@ -655,10 +656,11 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
       })
     } catch (error) {
       if (!isAbortError(error)) {
+        const publicMessage = instanceUnavailableMessage()
         setGroups([])
-        setGroupsError(errorMessage(error))
+        setGroupsError(publicMessage)
         toast.error("Не удалось загрузить группы", {
-          description: errorMessage(error),
+          description: publicMessage,
         })
       }
     } finally {
@@ -819,7 +821,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
 
     const connect = () => {
       if (stopped) return
-      const eventSource = new EventSource(`/api/viber/tasks/${trackedTaskId}/events`)
+      const eventSource = new EventSource(`/api/viber/${withDevice(`tasks/${trackedTaskId}/events`)}`)
       source = eventSource
       openedAt = 0
 
@@ -874,7 +876,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
       source?.close()
     }
-  }, [trackedTaskId, trackedTaskTerminal, refreshTaskDetailQuiet, ensureFinalDetail, finalizeSignal])
+  }, [trackedTaskId, trackedTaskTerminal, refreshTaskDetailQuiet, ensureFinalDetail, finalizeSignal, withDevice])
 
   // Задача завершилась — обязательно дотягиваем финальный stepHistory
   React.useEffect(() => {
@@ -906,7 +908,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     if (wasRunning && detail.status === "ready") {
       const syncTaskToSupabase = async () => {
         try {
-          const syncRes = await request<UsersSyncResult>(`users/sync/task/${detail.id}`, {
+          const syncRes = await request<UsersSyncResult>(withDevice(`users/sync/task/${detail.id}`), {
             method: "POST",
           })
           if (syncRes.success) {
@@ -934,13 +936,13 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
         void refreshMembers(selectedGroupIdRef.current, undefined, { force: true })
       }
     }
-  }, [activeTaskDetail, finalFetchTick, refreshDbStats, refreshGroups, refreshMembers, refreshTasks, request])
+  }, [activeTaskDetail, finalFetchTick, refreshDbStats, refreshGroups, refreshMembers, refreshTasks, request, withDevice])
 
   const handleManualSyncToDb = React.useCallback(
     async (conversationId: number, groupTitle?: string | null) => {
       setSyncingGroupId(String(conversationId))
       try {
-        const res = await request<UsersSyncResult>(`users/sync/group/${conversationId}`, {
+        const res = await request<UsersSyncResult>(withDevice(`users/sync/group/${conversationId}`), {
           method: "POST",
         })
         if (res.success) {
@@ -959,7 +961,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
         setSyncingGroupId(null)
       }
     },
-    [refreshDbStats, refreshGroups, refreshMembers, request]
+    [refreshDbStats, refreshGroups, refreshMembers, request, withDevice]
   )
 
   const selectedGroup = React.useMemo(
@@ -1062,9 +1064,9 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     setIsStoppingTask(true)
     try {
       if (status?.taskId) {
-        await request(`tasks/${status.taskId}/stop`, { method: "POST" })
+        await request(withDevice(`tasks/${status.taskId}/stop`), { method: "POST" })
       } else {
-        await request("stop", { method: "POST" })
+        await request(withDevice("stop"), { method: "POST" })
       }
       toast.info("Сигнал остановки отправлен")
       await refreshStatus(true)
@@ -1637,7 +1639,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                     </SelectContent>
                   </Select>
                   {groupsError ? (
-                    <p className="text-[11px] text-destructive">Инстанс недоступен: {groupsError}</p>
+                    <p className="text-[11px] text-destructive">{groupsError}</p>
                   ) : null}
                 </div>
 
@@ -2786,7 +2788,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                                 className="h-7 text-xs px-2 text-primary"
                                 onClick={async () => {
                                   try {
-                                    const detail = await request<TaskDetailDto>(`tasks/${t.id}`)
+                                    const detail = await request<TaskDetailDto>(withDevice(`tasks/${t.id}`))
                                     setSelectedHistoryTask(detail)
                                     setHistoryTaskModalOpen(true)
                                   } catch {

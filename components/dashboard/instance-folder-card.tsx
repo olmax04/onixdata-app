@@ -13,6 +13,7 @@ import {
   FolderOpenIcon,
   KeyRoundIcon,
   Loader2Icon,
+  LogOutIcon,
   MessageCircleIcon,
   MoreHorizontalIcon,
   PlayIcon,
@@ -45,6 +46,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
+  formatPhoneNumber,
   getAdbDetail,
   getAndroidDetail,
   getAuthDetail,
@@ -67,6 +69,7 @@ interface InstanceFolderCardProps {
   onOpenScreen: (name: string, url: string | null, adbPort?: number | null) => void
   onOpenLogs: (id: string, name: string) => void
   onOpenAuth: (emulator: EmulatorItem) => void
+  onLogout: (emulator: EmulatorItem) => void
   actionLoading?: string | null
 }
 
@@ -81,10 +84,14 @@ export function InstanceFolderCard({
   onOpenScreen,
   onOpenLogs,
   onOpenAuth,
+  onLogout,
   actionLoading,
 }: InstanceFolderCardProps) {
   const isRunning = emulator.state === "running"
-  const isWorking = actionLoading?.includes(emulator.id)
+  const isWorking = Boolean(actionLoading)
+  const isAuthorized = emulator.viberAccount?.status === "authorized"
+  const supportsViberLogout = emulator.supportsViberLogout === true
+  const isLogoutLoading = actionLoading === `logout-${emulator.id}`
 
   const status = getEmulatorStatus(emulator)
   const adbDetail = getAdbDetail(emulator.adbOnline)
@@ -514,6 +521,55 @@ export function InstanceFolderCard({
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-purple-500/20 bg-purple-500/[0.03] p-4 sm:p-5 shadow-sm">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <MessageCircleIcon className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                  <h4 className="font-semibold text-sm">Статус Viber</h4>
+                </div>
+                <div className="grid gap-3 text-xs sm:grid-cols-2 sm:gap-8">
+                  <div className="space-y-1">
+                    <span className="text-muted-foreground">Приложение</span>
+                    <div className="font-medium text-foreground">
+                      {emulator.viberRunning ? "Приложение запущено" : "Приложение не запущено"}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <span className="text-muted-foreground">Аккаунт</span>
+                    {isAuthorized && emulator.viberAccount ? (
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-foreground">
+                        <span className="font-medium">
+                          {emulator.viberAccount.displayName || "Без имени"}
+                        </span>
+                        <span className="font-mono text-muted-foreground">
+                          {formatPhoneNumber(emulator.viberAccount.phoneNumber) || "Номер неизвестен"}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="font-medium text-muted-foreground">Вход в аккаунт не выполнен</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!isRunning || !isAuthorized || !supportsViberLogout || isWorking}
+                onClick={() => onLogout(emulator)}
+                title={supportsViberLogout ? "Выйти из аккаунта Viber" : "Выход из Viber не поддерживается этим инстансом"}
+                className="gap-2 border-purple-500/30 text-purple-700 hover:bg-purple-500/10 hover:text-purple-800 dark:text-purple-300 dark:hover:text-purple-200"
+              >
+                {isLogoutLoading ? (
+                  <Loader2Icon className="h-4 w-4 animate-spin" />
+                ) : (
+                  <LogOutIcon className="h-4 w-4" />
+                )}
+                {isLogoutLoading ? "Выход из Viber..." : "Выйти из Viber"}
+              </Button>
             </div>
           </div>
 

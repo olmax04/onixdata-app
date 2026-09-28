@@ -4,6 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import { DatasetsTable } from "@/components/dashboard/datasets-table"
 import { SourcesTable } from "@/components/dashboard/sources-table"
+import type { GroupSyncStatus } from "@/lib/viber-parser/types"
+
+const BIG_GROUP_ID: GroupSyncStatus["id"] = "9007199254740993"
 
 let fetchMock: ReturnType<typeof vi.fn>
 
@@ -28,6 +31,8 @@ const MOCK_SYNC_STATUS = {
   lastSyncedAt: "2026-09-25T11:19:29.482646+00:00",
   groups: [
     {
+      id: BIG_GROUP_ID,
+      instanceId: "worker-02",
       groupKey: "5569560781658637023",
       conversationId: 3,
       name: "УКРАЇНЦІ В БЕРЛІНІ",
@@ -188,5 +193,54 @@ describe("SourcesTable (Supabase Groups)", () => {
       "/api/viber/users/sync/group/3",
       expect.objectContaining({ method: "POST" })
     )
+  })
+
+  it("удаляет группу по Supabase id, блокирует строку и обновляет статус", async () => {
+    let resolveDelete!: (response: Response) => void
+    const deleteResponse = new Promise<Response>((resolve) => {
+      resolveDelete = resolve
+    })
+    let statusCalls = 0
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (url.includes(`users/groups/${BIG_GROUP_ID}`) && init?.method === "DELETE") {
+        return deleteResponse
+      }
+      if (url.includes("users/sync/status")) {
+        statusCalls += 1
+        const status = statusCalls === 1
+          ? MOCK_SYNC_STATUS
+          : { ...MOCK_SYNC_STATUS, groupsTotal: 2, groups: [] }
+        return Promise.resolve(new Response(JSON.stringify(status), { status: 200 }))
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }))
+    })
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true)
+
+    render(<SourcesTable />)
+    await screen.findByText("УКРАЇНЦІ В БЕРЛІНІ")
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Удалить группу УКРАЇНЦІ В БЕРЛІНІ" }))
+    })
+
+    expect(confirmSpy).toHaveBeenCalledWith(expect.stringContaining("УКРАЇНЦІ В БЕРЛІНІ"))
+    expect(confirmSpy.mock.calls[0][0]).toContain("связи участников и сообщения мониторинга")
+    expect(confirmSpy.mock.calls[0][0]).toContain("Пользователи останутся в базе")
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/viber/users/groups/${BIG_GROUP_ID}`,
+      expect.objectContaining({ method: "DELETE" })
+    )
+    expect(screen.getByRole("button", { name: "Удаление группы УКРАЇНЦІ В БЕРЛІНІ" }).hasAttribute("disabled")).toBe(true)
+    expect(screen.getByRole("button", { name: "Синхронизировать" }).hasAttribute("disabled")).toBe(true)
+
+    await act(async () => {
+      resolveDelete(new Response(JSON.stringify({ success: true, id: BIG_GROUP_ID, name: "УКРАЇНЦІ В БЕРЛІНІ" }), { status: 200 }))
+      await deleteResponse
+    })
+
+    await waitFor(() => {
+      expect(statusCalls).toBe(2)
+      expect(screen.queryByText("УКРАЇНЦІ В БЕРЛІНІ")).toBeNull()
+    })
   })
 })

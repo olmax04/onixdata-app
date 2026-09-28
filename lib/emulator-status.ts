@@ -44,6 +44,7 @@ export interface EmulatorItem {
   adbOnline?: boolean
   setupStatus?: EmulatorSetupStatus | null
   viberAccount?: ViberAccountInfo | null
+  supportsViberLogout?: boolean
 }
 
 export interface EmulatorStatusView {

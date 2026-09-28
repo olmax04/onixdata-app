@@ -58,12 +58,14 @@ function json(data: unknown, status = 200) {
 let calls: Array<{ url: string; method: string; body: string | null }>
 /** HTTP-код вместо списка групп: 503 — инстанс недоступен. */
 let groupsHttpError: number | null
+let groupsErrorMessage: string
 let monitorStatus: Record<string, unknown>
 /** Что отдаёт устройство: у части бесед conversations.group_id пуст. */
 let groupsPayload: Record<string, unknown>
 
 beforeEach(() => {
   groupsHttpError = null
+  groupsErrorMessage = "Устройство недоступно: проверьте статус подключения."
   monitorStatus = MONITOR_STATUS
   groupsPayload = GROUPS
   installBrowserStubs()
@@ -82,7 +84,7 @@ beforeEach(() => {
       if (path.startsWith("groups")) {
         return Promise.resolve(
           groupsHttpError
-            ? json({ message: "Устройство недоступно: проверьте статус подключения." }, groupsHttpError)
+            ? json({ message: groupsErrorMessage }, groupsHttpError)
             : json(groupsPayload)
         )
       }
@@ -148,12 +150,15 @@ describe("ViberMonitorPanel on a named instance", () => {
     expect(groupsCall?.url).toContain("onDevice=true")
   })
 
-  it("names the unreachable instance instead of an empty group list", async () => {
+  it("hides backend diagnostics when the instance is unreachable", async () => {
     groupsHttpError = 503
+    groupsErrorMessage = "adb -s host.docker.internal:5556 shell cp -f /data/data/com.viber.voip/databases/viber_messages exited with code 1: error: device offline"
     render(<ViberMonitorPanel deviceId="viber" />)
 
-    const message = await screen.findByText(/Инстанс недоступен/)
-    expect(message.textContent).toContain("Устройство недоступно")
+    expect(
+      await screen.findByText("Инстанс недоступен. Проверьте, что он запущен, и повторите попытку.")
+    ).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/adb|host\.docker\.internal|\/data\/data|exited with code|device offline/i)
   })
 
   it("warns about the dead instance even when monitored groups fill the list", async () => {

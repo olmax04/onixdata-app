@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { GET } from "@/app/api/viber/[...path]/route"
+import { DELETE, GET, POST } from "@/app/api/viber/[...path]/route"
 
 const ORIGIN = "http://127.0.0.1:8080"
 
@@ -22,6 +22,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  delete process.env.VPS_AGENT_SECRET
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -152,6 +153,82 @@ describe("SSE-ветки прокси", () => {
 
     const res = await GET(req("tasks/task_a/events"), ctx("tasks/task_a/events"))
     expect(res.status).toBe(502)
+  })
+})
+
+describe("маршрутизация задач по инстансу", () => {
+  it.each([
+    "tasks/task_a",
+    "tasks/task_a/participants",
+    "tasks/task_a/events",
+  ])("прокидывает deviceId в GET %s", async (path) => {
+    fetchMock.mockResolvedValue(
+      new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } })
+    )
+
+    await GET(req(`${path}?deviceId=worker-03`), ctx(path))
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${ORIGIN}/api/${path}?deviceId=worker-03`)
+  })
+
+  it("прокидывает deviceId при остановке задачи", async () => {
+    fetchMock.mockResolvedValue(
+      new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } })
+    )
+
+    await POST(
+      req("tasks/task_a/stop?deviceId=worker-03"),
+      ctx("tasks/task_a/stop")
+    )
+
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      `${ORIGIN}/api/tasks/task_a/stop?deviceId=worker-03`
+    )
+  })
+
+  it("не выходит из инстанса при legacy-остановке", async () => {
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: "task_a", status: "running" }]), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } })
+      )
+
+    await POST(req("stop?deviceId=worker-03"), ctx("stop"))
+
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      `${ORIGIN}/api/tasks?deviceId=worker-03`,
+      `${ORIGIN}/api/tasks/task_a/stop?deviceId=worker-03`,
+    ])
+  })
+})
+
+describe("защищённые destructive запросы", () => {
+  it("добавляет server-side parser secret в DELETE", async () => {
+    process.env.VPS_AGENT_SECRET = "parser-service-secret"
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ success: true, id: "9007199254740993" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    )
+
+    await DELETE(
+      req("users/groups/9007199254740993"),
+      ctx("users/groups/9007199254740993")
+    )
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${ORIGIN}/api/users/groups/9007199254740993`,
+      expect.objectContaining({
+        method: "DELETE",
+        headers: expect.objectContaining({ "x-parser-secret": "parser-service-secret" }),
+      })
+    )
   })
 })
 

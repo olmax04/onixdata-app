@@ -108,7 +108,12 @@ async function forwardUpstream(
     cache: "no-store",
     signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   }
-  if (method !== "DELETE") {
+  if (method === "DELETE") {
+    const parserSecret = process.env.VPS_AGENT_SECRET?.trim()
+    if (parserSecret) {
+      init.headers = { "x-parser-secret": parserSecret }
+    }
+  } else {
     const bodyText = await request.text()
     init.headers = {
       "Content-Type": request.headers.get("content-type") || "application/json",
@@ -457,7 +462,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       pathParts[2] === "events"
     ) {
       const taskId = pathParts[1]
-      const upstream = await openUpstreamStream(`${origin}/api/tasks/${taskId}/events`)
+      const upstream = await openUpstreamStream(`${origin}/api/tasks/${taskId}/events${search}`)
 
       // Не выдаём 200 и пустой поток поверх ошибки апстрима: иначе клиент
       // видит «открылся и закрылся» и бесконечно переподключается к 404.
@@ -493,7 +498,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       pathParts[2] === "participants"
     ) {
       const taskId = pathParts[1]
-      const res = await fetch(`${origin}/api/tasks/${taskId}/participants`, {
+      const res = await fetch(`${origin}/api/tasks/${taskId}/participants${search}`, {
         cache: "no-store",
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       })
@@ -504,7 +509,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     // 8. Single Task: /api/viber/tasks/:id
     if (pathParts.length === 2 && pathParts[0] === "tasks") {
       const taskId = pathParts[1]
-      const res = await fetch(`${origin}/api/tasks/${taskId}`, {
+      const res = await fetch(`${origin}/api/tasks/${taskId}${search}`, {
         cache: "no-store",
         signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       })
@@ -647,14 +652,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     // 2. Stop Session: /api/viber/stop
     if (route === "stop") {
       try {
-        const tasksRes = await fetch(`${origin}/api/tasks`, { cache: "no-store" })
+        const tasksRes = await fetch(`${origin}/api/tasks${search}`, { cache: "no-store" })
         if (tasksRes.ok) {
           const tasks = (await tasksRes.json()) as Array<{ id: string; status: string }>
           const activeTasks = tasks.filter(
             (t) => t.status === "initializing" || t.status === "starting" || t.status === "running"
           )
           for (const t of activeTasks) {
-            await fetch(`${origin}/api/tasks/${t.id}/stop`, { method: "POST" })
+            await fetch(`${origin}/api/tasks/${t.id}/stop${search}`, { method: "POST" })
           }
         }
       } catch {
@@ -670,7 +675,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       pathParts[2] === "stop"
     ) {
       const taskId = pathParts[1]
-      const res = await fetch(`${origin}/api/tasks/${taskId}/stop`, { method: "POST" })
+      const res = await fetch(`${origin}/api/tasks/${taskId}/stop${search}`, { method: "POST" })
       const data = await res.json()
       return NextResponse.json(data, { status: res.status })
     }

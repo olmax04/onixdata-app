@@ -56,6 +56,14 @@ import type {
 
 const STATUS_POLL_MS = 5000
 
+function withDeviceId(path: string, deviceId?: string) {
+  if (!deviceId) return path
+  const [pathname, query] = path.split("?", 2)
+  const params = new URLSearchParams(query)
+  params.set("deviceId", deviceId)
+  return `${pathname}?${params.toString()}`
+}
+
 export interface ViberBroadcastPanelProps {
   deviceId?: string
 }
@@ -72,6 +80,11 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
   const [editingId, setEditingId] = React.useState<string | null>(null)
 
   const [form, setForm] = React.useState<CampaignFormState>(() => emptyCampaignForm())
+
+  const broadcastPath = React.useCallback(
+    (path: string) => withDeviceId(path, deviceId),
+    [deviceId]
+  )
 
   const running = status?.campaign ?? campaigns.find((item) => item.status === "running") ?? null
 
@@ -106,10 +119,10 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
 
   const refresh = React.useCallback(async () => {
     const [campaignList, broadcastStatus, last, recent] = await Promise.allSettled([
-      viberJson<BroadcastCampaign[]>("broadcast/campaigns"),
-      viberJson<BroadcastStatusDto>("broadcast/status"),
-      viberJson<BroadcastSendHistory[]>("broadcast/history/last"),
-      viberJson<BroadcastSendHistory[]>("broadcast/history?limit=50"),
+      viberJson<BroadcastCampaign[]>(broadcastPath("broadcast/campaigns")),
+      viberJson<BroadcastStatusDto>(broadcastPath("broadcast/status")),
+      viberJson<BroadcastSendHistory[]>(broadcastPath("broadcast/history/last")),
+      viberJson<BroadcastSendHistory[]>(broadcastPath("broadcast/history?limit=50")),
     ])
     if (campaignList.status === "fulfilled") {
       setCampaigns(Array.isArray(campaignList.value) ? campaignList.value : [])
@@ -125,7 +138,7 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
       campaignsOk: campaignList.status === "fulfilled",
       statusOk: broadcastStatus.status === "fulfilled",
     }
-  }, [])
+  }, [broadcastPath])
 
   const loadInitial = React.useCallback(async () => {
     setLoading(true)
@@ -170,7 +183,7 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
 
     setSaving(true)
     try {
-      const created = await viberJson<BroadcastCampaign>("broadcast/campaigns", {
+      const created = await viberJson<BroadcastCampaign>(broadcastPath("broadcast/campaigns"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formStateToPayload(form, knownNames)),
@@ -190,7 +203,9 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
   const handleStart = async (id: string) => {
     setBusyId(id)
     try {
-      await viberJson<BroadcastCampaign>(`broadcast/campaigns/${id}/start`, { method: "POST" })
+      await viberJson<BroadcastCampaign>(broadcastPath(`broadcast/campaigns/${id}/start`), {
+        method: "POST",
+      })
       toast.success("Рассылка запущена")
       await refresh()
     } catch (error) {
@@ -205,7 +220,9 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
   const handleStop = async (id: string) => {
     setBusyId(id)
     try {
-      await viberJson<BroadcastCampaign>(`broadcast/campaigns/${id}/stop`, { method: "POST" })
+      await viberJson<BroadcastCampaign>(broadcastPath(`broadcast/campaigns/${id}/stop`), {
+        method: "POST",
+      })
       toast.success("Рассылка остановлена")
       await refresh()
     } catch (error) {
@@ -220,7 +237,7 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
   const handleDelete = async (id: string) => {
     setBusyId(id)
     try {
-      await viberJson<void>(`broadcast/campaigns/${id}`, { method: "DELETE" })
+      await viberJson<void>(broadcastPath(`broadcast/campaigns/${id}`), { method: "DELETE" })
       toast.success("Кампания удалена")
       await refresh()
     } catch (error) {
@@ -440,6 +457,7 @@ export function ViberBroadcastPanel({ deviceId }: ViberBroadcastPanelProps = {})
 
       <BroadcastCampaignDialog
         campaign={editing}
+        deviceId={deviceId}
         groupRows={groupRows}
         loadingGroups={loading}
         open={editingId !== null}

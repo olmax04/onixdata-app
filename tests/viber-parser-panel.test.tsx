@@ -190,7 +190,9 @@ describe("уведомление о завершении", () => {
   it("показывает реальные числа, когда финальные детали дотянуты", async () => {
     backend.status = runningStatus("task_a")
     backend.detail = taskDetail("task_a", "running")
-    await mountPanel()
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
 
     backend.holdDetail = true
     const source = FakeEventSource.last
@@ -207,6 +209,10 @@ describe("уведомление о завершении", () => {
     expect(toastMock.success.mock.calls[0][1]).toMatchObject({
       description: "Собрано: 120, с номерами: 87",
     })
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/viber/users/sync/task/task_a?deviceId=worker-03",
+      expect.objectContaining({ method: "POST" })
+    )
   })
 })
 
@@ -318,6 +324,56 @@ describe("смена задачи и отставшие ответы", () => {
 })
 
 describe("управление задачей", () => {
+  it("все операции активной задачи остаются на выбранном инстансе", async () => {
+    backend.status = runningStatus("task_a")
+    backend.detail = taskDetail("task_a", "running")
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
+
+    const urls = fetchSpy.mock.calls.map(([input]) => String(input))
+    expect(urls).toContain("/api/viber/tasks/task_a?deviceId=worker-03")
+    expect((FakeEventSource.last as unknown as { url: string }).url).toBe(
+      "/api/viber/tasks/task_a/events?deviceId=worker-03"
+    )
+
+    const posts: string[] = []
+    const original = global.fetch as typeof fetch
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if ((init?.method ?? "GET").toUpperCase() === "POST") posts.push(url)
+      return original(input as RequestInfo, init)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Остановить сбор" }))
+    await advance(50)
+
+    expect(posts).toContain("/api/viber/tasks/task_a/stop?deviceId=worker-03")
+  })
+
+  it("детали задачи из истории запрашиваются с выбранного инстанса", async () => {
+    backend.status = finishedStatus("task_a")
+    backend.detail = taskDetail("task_a", "ready")
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
+
+    await reactAct(async () => {
+      const tab = screen.getByRole("tab", { name: /История/ })
+      fireEvent.mouseDown(tab)
+      fireEvent.click(tab)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    fetchSpy.mockClear()
+    fireEvent.click(screen.getByRole("button", { name: "Детали" }))
+    await advance(0)
+
+    expect(fetchSpy.mock.calls.map(([input]) => String(input))).toContain(
+      "/api/viber/tasks/task_a?deviceId=worker-03"
+    )
+  })
+
   it("кнопка «Остановить сбор» шлёт сигнал остановки текущей задаче", async () => {
     backend.status = runningStatus("task_a")
     backend.detail = taskDetail("task_a", "running")
@@ -551,6 +607,20 @@ describe("список групп инстанса", () => {
     expect(first).toContain("deviceId=worker")
   })
 
+  it("ручная выгрузка группы отправляется на выбранный инстанс", async () => {
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
+
+    fireEvent.click(screen.getByRole("button", { name: "Выгрузить в БД" }))
+    await advance(0)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/viber/users/sync/group/42?deviceId=worker-03",
+      expect.objectContaining({ method: "POST" })
+    )
+  })
+
   it("без инстанса список остаётся полным, вместе с архивом", async () => {
     await mountPanel()
 
@@ -559,13 +629,20 @@ describe("список групп инстанса", () => {
     expect(first).not.toContain("onDevice")
   })
 
-  it("недоступный инстанс показывает причину, а не пустой список групп", async () => {
+  it("скрывает backend-диагностику недоступного инстанса в тексте и уведомлении", async () => {
     backend.groupsHttpError = 503
+    backend.groupsErrorMessage = "adb -s host.docker.internal:5556 shell cp -f /data/data/com.viber.voip/databases/viber_messages exited with code 1: error: device offline"
     render(<ViberParserPanel deviceId="worker" />)
     await settle()
     await advance(0)
 
-    expect(screen.getAllByText(/Инстанс недоступен/).length).toBeGreaterThan(0)
+    expect(
+      screen.getByText("Инстанс недоступен. Проверьте, что он запущен, и повторите попытку.")
+    ).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/adb|host\.docker\.internal|\/data\/data|exited with code|device offline/i)
+    expect(toastMock.error).toHaveBeenCalledWith("Не удалось загрузить группы", {
+      description: "Инстанс недоступен. Проверьте, что он запущен, и повторите попытку.",
+    })
   })
 })
 

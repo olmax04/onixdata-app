@@ -42,6 +42,14 @@ function agentHeaders(extra?: Record<string, string>): Record<string, string> {
   return h
 }
 
+function forwardResponse(response: Response): NextResponse {
+  const contentType = response.headers.get("content-type")
+  return new NextResponse(response.body, {
+    status: response.status,
+    headers: contentType ? { "Content-Type": contentType } : undefined,
+  })
+}
+
 interface ViberAccountDto {
   phoneNumber?: string | null
   displayName?: string | null
@@ -92,6 +100,7 @@ function buildDefaultInstance(viberStatus: ViberEngineStatusResponse, host: stri
       updatedAt: new Date().toISOString(),
       exitCode: 0,
     },
+    supportsViberLogout: false,
     viberAccount: phone
       ? {
           phoneNumber: phone,
@@ -172,6 +181,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         headers: { "Content-Type": contentType },
       })
     }
+    if (agentRes.status !== 404) return forwardResponse(agentRes)
   } catch {
     // Agent not reachable, fallback to parser API or virtual instance
   }
@@ -195,6 +205,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         headers: { "Content-Type": contentType },
       })
     }
+    if (upstream.status !== 404) return forwardResponse(upstream)
   } catch {
     // Upstream doesn't implement /api/emulators or is unreachable -> fallback to virtual instance
   }
@@ -253,18 +264,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         signal: AbortSignal.timeout(30_000),
       })
 
-      if (agentRes.ok) {
-        const contentType = agentRes.headers.get("content-type") || ""
-        if (contentType.includes("application/json")) {
-          const data = await agentRes.json()
-          return NextResponse.json(data, { status: agentRes.status })
-        }
-        const text = await agentRes.text()
-        return new NextResponse(text, {
-          status: agentRes.status,
-          headers: { "Content-Type": contentType },
-        })
-      }
+      if (agentRes.status !== 404) return forwardResponse(agentRes)
     } catch {
       // Agent error, try parser or fallback
     }
@@ -280,18 +280,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
 
-    if (upstream.ok) {
-      const contentType = upstream.headers.get("content-type") || ""
-      if (contentType.includes("application/json")) {
-        const data = await upstream.json()
-        return NextResponse.json(data, { status: upstream.status })
-      }
-      const text = await upstream.text()
-      return new NextResponse(text, {
-        status: upstream.status,
-        headers: { "Content-Type": contentType },
-      })
-    }
+    if (upstream.status !== 404) return forwardResponse(upstream)
   } catch {
     // Fallback
   }
@@ -364,14 +353,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
 
-    if (agentRes.ok) {
-      const contentType = agentRes.headers.get("content-type") || ""
-      if (contentType.includes("application/json")) {
-        const data = await agentRes.json()
-        return NextResponse.json(data, { status: agentRes.status })
-      }
-      return new NextResponse(null, { status: agentRes.status })
-    }
+    if (agentRes.status !== 404) return forwardResponse(agentRes)
   } catch {
     // Fallback
   }
@@ -384,14 +366,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
     })
 
-    if (upstream.ok) {
-      const contentType = upstream.headers.get("content-type") || ""
-      if (contentType.includes("application/json")) {
-        const data = await upstream.json()
-        return NextResponse.json(data, { status: upstream.status })
-      }
-      return new NextResponse(null, { status: upstream.status })
-    }
+    if (upstream.status !== 404) return forwardResponse(upstream)
   } catch {
     // Upstream fallback
   }

@@ -17,6 +17,8 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 
+import { instanceUnavailableMessage } from "@/lib/viber-parser/public-error"
+
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -302,11 +304,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
         // панель выглядит так, будто на эмуляторе просто нет групп. Список
         // чужого инстанса при этом обязан уйти с экрана.
         setGroups([])
-        setGroupsError(
-          groupsRes.reason instanceof Error
-            ? groupsRes.reason.message
-            : "не удалось загрузить группы"
-        )
+        setGroupsError(instanceUnavailableMessage())
       }
       if (monitorStatus.status === "fulfilled") {
         setStatus({
@@ -589,7 +587,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
             />
           </div>
           {groupsError ? (
-            <p className="text-[11px] text-destructive">Инстанс недоступен: {groupsError}</p>
+            <p className="text-[11px] text-destructive">{groupsError}</p>
           ) : null}
           <ScrollArea className="h-[min(28rem,60vh)] rounded-lg border">
             {loading && groupRows.length === 0 ? (

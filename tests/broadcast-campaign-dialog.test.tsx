@@ -47,12 +47,13 @@ const groupRows = [
 
 const fetchMock = vi.fn()
 
-function renderDialog(overrides?: Partial<BroadcastCampaign>) {
+function renderDialog(overrides?: Partial<BroadcastCampaign>, deviceId?: string) {
   const value = { ...campaign, ...overrides }
   const onSaved = vi.fn(async () => {})
   render(
     <BroadcastCampaignDialog
       campaign={value}
+      deviceId={deviceId}
       groupRows={groupRows}
       open={true}
       onOpenChange={() => {}}
@@ -115,6 +116,24 @@ describe("BroadcastCampaignDialog", () => {
     expect(JSON.parse(String(init.body))).toEqual({ name: "Утренняя" })
     await waitFor(() => expect(onSaved).toHaveBeenCalled())
     expect(toastMock.success).toHaveBeenCalled()
+  })
+
+  it("отправляет PATCH в выбранный инстанс", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ ...campaign, name: "Утренняя" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    )
+    renderDialog(undefined, "worker / 1")
+
+    fireEvent.change(screen.getByLabelText("Название"), { target: { value: "Утренняя" } })
+    fireEvent.click(screen.getByRole("button", { name: /Сохранить/ }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/viber/broadcast/campaigns/campaign_1?deviceId=worker+%2F+1"
+    )
   })
 
   it("передаёт имена групп вместе с новым списком бесед", async () => {
