@@ -318,6 +318,56 @@ describe("смена задачи и отставшие ответы", () => {
 })
 
 describe("управление задачей", () => {
+  it("все операции активной задачи остаются на выбранном инстансе", async () => {
+    backend.status = runningStatus("task_a")
+    backend.detail = taskDetail("task_a", "running")
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
+
+    const urls = fetchSpy.mock.calls.map(([input]) => String(input))
+    expect(urls).toContain("/api/viber/tasks/task_a?deviceId=worker-03")
+    expect((FakeEventSource.last as unknown as { url: string }).url).toBe(
+      "/api/viber/tasks/task_a/events?deviceId=worker-03"
+    )
+
+    const posts: string[] = []
+    const original = global.fetch as typeof fetch
+    vi.stubGlobal("fetch", (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input.toString()
+      if ((init?.method ?? "GET").toUpperCase() === "POST") posts.push(url)
+      return original(input as RequestInfo, init)
+    })
+
+    fireEvent.click(screen.getByRole("button", { name: "Остановить сбор" }))
+    await advance(50)
+
+    expect(posts).toContain("/api/viber/tasks/task_a/stop?deviceId=worker-03")
+  })
+
+  it("детали задачи из истории запрашиваются с выбранного инстанса", async () => {
+    backend.status = finishedStatus("task_a")
+    backend.detail = taskDetail("task_a", "ready")
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
+
+    await reactAct(async () => {
+      const tab = screen.getByRole("tab", { name: /История/ })
+      fireEvent.mouseDown(tab)
+      fireEvent.click(tab)
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    fetchSpy.mockClear()
+    fireEvent.click(screen.getByRole("button", { name: "Детали" }))
+    await advance(0)
+
+    expect(fetchSpy.mock.calls.map(([input]) => String(input))).toContain(
+      "/api/viber/tasks/task_a?deviceId=worker-03"
+    )
+  })
+
   it("кнопка «Остановить сбор» шлёт сигнал остановки текущей задаче", async () => {
     backend.status = runningStatus("task_a")
     backend.detail = taskDetail("task_a", "running")

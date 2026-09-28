@@ -518,14 +518,14 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
   // 1a. Детали задачи: единственный источник полной истории шагов
   const fetchTaskDetail = React.useCallback(
     async (taskId: string, signal?: AbortSignal) => {
-      const detail = await request<TaskDetailDto>(`tasks/${taskId}`, {
+      const detail = await request<TaskDetailDto>(withDevice(`tasks/${taskId}`), {
         signal,
         timeoutMs: TASK_DETAIL_REQUEST_TIMEOUT_MS,
       })
       applyDetail(detail)
       return detail
     },
-    [applyDetail]
+    [applyDetail, withDevice]
   )
 
   const refreshTaskDetailQuiet = React.useCallback(
@@ -819,7 +819,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
 
     const connect = () => {
       if (stopped) return
-      const eventSource = new EventSource(`/api/viber/tasks/${trackedTaskId}/events`)
+      const eventSource = new EventSource(`/api/viber/${withDevice(`tasks/${trackedTaskId}/events`)}`)
       source = eventSource
       openedAt = 0
 
@@ -874,7 +874,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
       source?.close()
     }
-  }, [trackedTaskId, trackedTaskTerminal, refreshTaskDetailQuiet, ensureFinalDetail, finalizeSignal])
+  }, [trackedTaskId, trackedTaskTerminal, refreshTaskDetailQuiet, ensureFinalDetail, finalizeSignal, withDevice])
 
   // Задача завершилась — обязательно дотягиваем финальный stepHistory
   React.useEffect(() => {
@@ -1062,9 +1062,9 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     setIsStoppingTask(true)
     try {
       if (status?.taskId) {
-        await request(`tasks/${status.taskId}/stop`, { method: "POST" })
+        await request(withDevice(`tasks/${status.taskId}/stop`), { method: "POST" })
       } else {
-        await request("stop", { method: "POST" })
+        await request(withDevice("stop"), { method: "POST" })
       }
       toast.info("Сигнал остановки отправлен")
       await refreshStatus(true)
@@ -2786,7 +2786,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                                 className="h-7 text-xs px-2 text-primary"
                                 onClick={async () => {
                                   try {
-                                    const detail = await request<TaskDetailDto>(`tasks/${t.id}`)
+                                    const detail = await request<TaskDetailDto>(withDevice(`tasks/${t.id}`))
                                     setSelectedHistoryTask(detail)
                                     setHistoryTaskModalOpen(true)
                                   } catch {
