@@ -103,6 +103,7 @@ export interface Backend {
   statusHttpError: number | null
   /** HTTP-код вместо списка групп (503 = инстанс недоступен). */
   groupsHttpError: number | null
+  groupsErrorMessage: string
   /** HTTP-код вместо статистики базы (статистика не прочиталась). */
   dbStatsHttpError: number | null
   detail: TaskDetailDto | null
@@ -125,6 +126,7 @@ export function makeBackend(overrides: Partial<Backend> = {}): Backend {
     status: idleStatus(),
     statusHttpError: null,
     groupsHttpError: null,
+    groupsErrorMessage: "Устройство недоступно: проверьте статус подключения.",
     dbStatsHttpError: null,
     detail: null,
     detailHttpError: null,
@@ -167,7 +169,7 @@ export function installFetch(backend: Backend) {
     if (path === "groups") {
       if (backend.groupsHttpError) {
         return json(
-          { message: "Устройство недоступно: проверьте статус подключения." },
+          { message: backend.groupsErrorMessage },
           backend.groupsHttpError
         )
       }

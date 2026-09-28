@@ -190,7 +190,9 @@ describe("уведомление о завершении", () => {
   it("показывает реальные числа, когда финальные детали дотянуты", async () => {
     backend.status = runningStatus("task_a")
     backend.detail = taskDetail("task_a", "running")
-    await mountPanel()
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
 
     backend.holdDetail = true
     const source = FakeEventSource.last
@@ -207,6 +209,10 @@ describe("уведомление о завершении", () => {
     expect(toastMock.success.mock.calls[0][1]).toMatchObject({
       description: "Собрано: 120, с номерами: 87",
     })
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/viber/users/sync/task/task_a?deviceId=worker-03",
+      expect.objectContaining({ method: "POST" })
+    )
   })
 })
 
@@ -601,6 +607,20 @@ describe("список групп инстанса", () => {
     expect(first).toContain("deviceId=worker")
   })
 
+  it("ручная выгрузка группы отправляется на выбранный инстанс", async () => {
+    render(<ViberParserPanel deviceId="worker-03" />)
+    await settle()
+    await advance(0)
+
+    fireEvent.click(screen.getByRole("button", { name: "Выгрузить в БД" }))
+    await advance(0)
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      "/api/viber/users/sync/group/42?deviceId=worker-03",
+      expect.objectContaining({ method: "POST" })
+    )
+  })
+
   it("без инстанса список остаётся полным, вместе с архивом", async () => {
     await mountPanel()
 
@@ -609,13 +629,20 @@ describe("список групп инстанса", () => {
     expect(first).not.toContain("onDevice")
   })
 
-  it("недоступный инстанс показывает причину, а не пустой список групп", async () => {
+  it("скрывает backend-диагностику недоступного инстанса в тексте и уведомлении", async () => {
     backend.groupsHttpError = 503
+    backend.groupsErrorMessage = "adb -s host.docker.internal:5556 shell cp -f /data/data/com.viber.voip/databases/viber_messages exited with code 1: error: device offline"
     render(<ViberParserPanel deviceId="worker" />)
     await settle()
     await advance(0)
 
-    expect(screen.getAllByText(/Инстанс недоступен/).length).toBeGreaterThan(0)
+    expect(
+      screen.getByText("Инстанс недоступен. Проверьте, что он запущен, и повторите попытку.")
+    ).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/adb|host\.docker\.internal|\/data\/data|exited with code|device offline/i)
+    expect(toastMock.error).toHaveBeenCalledWith("Не удалось загрузить группы", {
+      description: "Инстанс недоступен. Проверьте, что он запущен, и повторите попытку.",
+    })
   })
 })
 

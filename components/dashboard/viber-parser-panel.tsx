@@ -89,6 +89,7 @@ import type {
   UsersSyncResult,
 } from "@/lib/viber-parser/types"
 import { messageHasMedia, messagePreviewText } from "@/lib/viber-parser/message-display"
+import { instanceUnavailableMessage } from "@/lib/viber-parser/public-error"
 import {
   applyTaskEvent,
   buildStepTimeline,
@@ -655,10 +656,11 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
       })
     } catch (error) {
       if (!isAbortError(error)) {
+        const publicMessage = instanceUnavailableMessage()
         setGroups([])
-        setGroupsError(errorMessage(error))
+        setGroupsError(publicMessage)
         toast.error("Не удалось загрузить группы", {
-          description: errorMessage(error),
+          description: publicMessage,
         })
       }
     } finally {
@@ -906,7 +908,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     if (wasRunning && detail.status === "ready") {
       const syncTaskToSupabase = async () => {
         try {
-          const syncRes = await request<UsersSyncResult>(`users/sync/task/${detail.id}`, {
+          const syncRes = await request<UsersSyncResult>(withDevice(`users/sync/task/${detail.id}`), {
             method: "POST",
           })
           if (syncRes.success) {
@@ -934,13 +936,13 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
         void refreshMembers(selectedGroupIdRef.current, undefined, { force: true })
       }
     }
-  }, [activeTaskDetail, finalFetchTick, refreshDbStats, refreshGroups, refreshMembers, refreshTasks, request])
+  }, [activeTaskDetail, finalFetchTick, refreshDbStats, refreshGroups, refreshMembers, refreshTasks, request, withDevice])
 
   const handleManualSyncToDb = React.useCallback(
     async (conversationId: number, groupTitle?: string | null) => {
       setSyncingGroupId(String(conversationId))
       try {
-        const res = await request<UsersSyncResult>(`users/sync/group/${conversationId}`, {
+        const res = await request<UsersSyncResult>(withDevice(`users/sync/group/${conversationId}`), {
           method: "POST",
         })
         if (res.success) {
@@ -959,7 +961,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
         setSyncingGroupId(null)
       }
     },
-    [refreshDbStats, refreshGroups, refreshMembers, request]
+    [refreshDbStats, refreshGroups, refreshMembers, request, withDevice]
   )
 
   const selectedGroup = React.useMemo(
@@ -1637,7 +1639,7 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
                     </SelectContent>
                   </Select>
                   {groupsError ? (
-                    <p className="text-[11px] text-destructive">Инстанс недоступен: {groupsError}</p>
+                    <p className="text-[11px] text-destructive">{groupsError}</p>
                   ) : null}
                 </div>
 
