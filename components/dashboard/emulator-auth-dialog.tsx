@@ -7,6 +7,7 @@ import {
   CheckCircle2Icon,
   KeyRoundIcon,
   Loader2Icon,
+  PhoneIncomingIcon,
   QrCodeIcon,
   SmartphoneIcon,
   RotateCcwIcon,
@@ -34,6 +35,16 @@ import {
 } from "@/lib/viber-qr"
 
 type AuthMode = "sms" | "qr"
+
+/** Как Viber подтверждает номер: звонком (код — хвост номера звонящего) или SMS. */
+type Verification = "call" | "sms"
+
+interface PhoneStepResult {
+  success?: boolean
+  message?: string
+  verification?: Verification
+  codeLength?: number | null
+}
 
 const TONE_CLASSES: Record<string, string> = {
   neutral: "text-muted-foreground",
@@ -73,6 +84,10 @@ export function EmulatorAuthDialog({
   const [loading, setLoading] = React.useState(false)
   const [statusMessage, setStatusMessage] = React.useState<string | null>(null)
   const [qrStatus, setQrStatus] = React.useState<QrAuthStatus | null>(null)
+  const [verification, setVerification] = React.useState<Verification | null>(null)
+  const [codeLength, setCodeLength] = React.useState<number | null>(null)
+  const [codeHint, setCodeHint] = React.useState<string | null>(null)
+  const [calling, setCalling] = React.useState(false)
 
   const deviceId = emulator?.adbSerial || undefined
 
@@ -88,8 +103,18 @@ export function EmulatorAuthDialog({
       setStatusMessage(null)
       setLoading(false)
       setQrStatus(null)
+      setVerification(null)
+      setCodeLength(null)
+      setCodeHint(null)
+      setCalling(false)
     }
   }, [open, emulator?.id])
+
+  const applyPhoneStep = (data: PhoneStepResult) => {
+    setVerification(data.verification ?? null)
+    setCodeLength(typeof data.codeLength === "number" && data.codeLength > 0 ? data.codeLength : null)
+    setCodeHint(data.message ?? null)
+  }
 
   // --- Вход по QR-коду ---------------------------------------------------
 
@@ -199,7 +224,7 @@ export function EmulatorAuthDialog({
     }
 
     setLoading(true)
-    setStatusMessage("Запуск Viber и ввод номера...")
+    setStatusMessage("Ввод номера, запрос звонка и выдача разрешений Viber...")
     try {
       const res = await fetch("/api/viber/auth/phone", {
         method: "POST",
@@ -211,12 +236,13 @@ export function EmulatorAuthDialog({
         }),
       })
 
-      const data = await res.json()
+      const data = (await res.json()) as PhoneStepResult
       if (!res.ok || !data.success) {
         throw new Error(data.message || "Не удалось отправить номер")
       }
 
-      toast.success("Номер отправлен!", {
+      applyPhoneStep(data)
+      toast.success(data.verification === "call" ? "Viber звонит на ваш номер" : "Номер отправлен!", {
         description: data.message || "Ожидайте SMS-код или звонок с подтверждением",
       })
       setStep("code")
@@ -230,11 +256,38 @@ export function EmulatorAuthDialog({
     }
   }
 
+  const handleRequestCall = async () => {
+    setCalling(true)
+    try {
+      const res = await fetch("/api/viber/auth/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: emulator?.adbSerial || undefined }),
+      })
+      const data = (await res.json()) as PhoneStepResult
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Не удалось запросить звонок")
+      }
+      applyPhoneStep(data)
+      toast.success("Звонок запрошен", { description: data.message })
+    } catch (err: any) {
+      toast.error("Звонок не запрошен", { description: err.message || String(err) })
+    } finally {
+      setCalling(false)
+    }
+  }
+
   const handleSendCode = async (e: React.FormEvent) => {
     e.preventDefault()
     const cleanCode = code.trim().replace(/\D/g, "")
-    if (!cleanCode || cleanCode.length < 4) {
-      toast.error("Введите код подтверждения (минимум 4-6 цифр)")
+    const minLength = codeLength ?? 4
+    if (!cleanCode || cleanCode.length < minLength) {
+      const digits = codeLength ? `последние ${codeLength} цифры` : "последние цифры"
+      toast.error(
+        verification === "call"
+          ? `Введите ${digits} номера, с которого звонил Viber`
+          : "Введите код подтверждения (минимум 4-6 цифр)"
+      )
       return
     }
 
@@ -372,7 +425,8 @@ export function EmulatorAuthDialog({
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                Номер будет передан в приложение Viber, после чего будет запрошен код подтверждения.
+                Панель введёт номер в Viber, нажмёт «Позвонить мне» и выдаст приложению все
+                разрешения. Останется ввести последние цифры номера, с которого позвонит Viber.
               </p>
             </div>
 
@@ -428,23 +482,43 @@ export function EmulatorAuthDialog({
                 <span className="text-muted-foreground">Номер:</span>
                 <span className="font-mono font-bold text-foreground">{phoneNumber}</span>
               </div>
-              <p className="text-muted-foreground text-[11px]">
-                Введите полученный SMS-код или цифры из проверочного звонка.
-              </p>
+              {verification === "call" ? (
+                <p className="flex items-start gap-1.5 text-[11px] text-foreground">
+                  <PhoneIncomingIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-purple-600" />
+                  <span>
+                    {codeHint ||
+                      "Viber звонит на этот номер. Введите последние цифры номера, с которого поступил звонок."}
+                  </span>
+                </p>
+              ) : (
+                <p className="text-muted-foreground text-[11px]">
+                  {codeHint || "Введите полученный SMS-код или цифры из проверочного звонка."}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="code">Код подтверждения (SMS / звонок)</Label>
+              <Label htmlFor="code">
+                {verification === "call"
+                  ? codeLength
+                    ? `Последние ${codeLength} цифры номера звонящего`
+                    : "Последние цифры номера звонящего"
+                  : "Код подтверждения (SMS / звонок)"}
+              </Label>
               <Input
                 id="code"
-                placeholder="123456"
+                inputMode="numeric"
+                placeholder={codeLength ? "0".repeat(codeLength) : verification === "call" ? "0000" : "123456"}
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 disabled={loading}
                 autoFocus
-                maxLength={8}
+                maxLength={codeLength ?? 8}
                 className="font-mono text-xl tracking-[0.3em] text-center font-bold"
               />
+              <p className="text-[11px] text-muted-foreground">
+                После подтверждения панель сама закроет запросы разрешений и предложения бэкапа.
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -468,15 +542,30 @@ export function EmulatorAuthDialog({
             )}
 
             <div className="flex justify-between items-center text-xs text-muted-foreground pt-1">
-              <button
-                type="button"
-                onClick={() => setStep("phone")}
-                disabled={loading}
-                className="text-purple-600 hover:underline flex items-center gap-1"
-              >
-                <RotateCcwIcon className="h-3 w-3" />
-                Изменить номер
-              </button>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => setStep("phone")}
+                  disabled={loading || calling}
+                  className="text-purple-600 hover:underline flex items-center gap-1"
+                >
+                  <RotateCcwIcon className="h-3 w-3" />
+                  Изменить номер
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleRequestCall()}
+                  disabled={loading || calling}
+                  className="text-purple-600 hover:underline flex items-center gap-1"
+                >
+                  {calling ? (
+                    <Loader2Icon className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <PhoneIncomingIcon className="h-3 w-3" />
+                  )}
+                  Позвонить ещё раз
+                </button>
+              </div>
 
               {onOpenScreen && (
                 <button

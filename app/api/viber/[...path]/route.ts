@@ -870,6 +870,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json(data, { status: authRes.status })
     }
 
+    // 10b. Auth call again: /api/viber/auth/call — «Позвонить мне» ещё раз
+    if (route === "auth/call" || route === "viber/auth/call") {
+      const bodyText = await request.text()
+      const authRes = await fetch(`${origin}/api/auth/call`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: bodyText || undefined,
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      })
+      const data = await authRes.json()
+      return NextResponse.json(data, { status: authRes.status })
+    }
+
     // 11. QR auth start / cancel: /api/viber/auth/qr/start, /api/viber/auth/qr/cancel
     if (
       route === "auth/qr/start" ||
