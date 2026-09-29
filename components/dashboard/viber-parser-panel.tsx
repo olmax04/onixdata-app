@@ -1015,7 +1015,8 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
     }
   }
 
-  // Быстрая подгрузка участников из базы данных
+  // Быстрая подгрузка участников из базы данных (Supabase) — без задачи на
+  // эмуляторе: участники уже выгружены, их достаточно прочитать.
   const handleFastLoadFromDb = async () => {
     if (!selectedGroup) {
       toast.error("Выберите группу для загрузки участников")
@@ -1024,34 +1025,23 @@ export function ViberParserPanel({ deviceId }: ViberParserPanelProps = {}) {
 
     setIsFastLoading(true)
     try {
-      const target = selectedGroup.name || String(selectedGroup.conversationId)
+      const groupId = String(selectedGroup.conversationId)
+      const response = await request<ViberMembersResponse>(
+        withDevice(`groups/${encodeURIComponent(groupId)}/members?source=supabase&refresh=1`)
+      )
+      setMembersSource("supabase")
+      setMembers(response)
+      setMembersError(null)
+      setMembersPage(1)
 
-      const result = await request<{ taskId: string; message: string }>("participants/load-from-db", {
-        method: "POST",
-        body: {
-          group: target,
-          restartApp: restartAppAfterCollect,
-          allowPartial: true,
-          fromDatabaseOnly: true,
-          deviceId: deviceId || undefined,
-        },
-      })
-
-      if (result.taskId) {
-        desiredTaskIdRef.current = result.taskId
-        trackedTaskIdRef.current = result.taskId
-        loadedDetailIdRef.current = null
-        hiddenTaskIdRef.current = null
-        seenRunningTasksRef.current.add(result.taskId)
-        setActiveTaskDetail(null)
+      const count = response.count ?? response.members.length
+      if (response.source === "emulator") {
+        toast.warning("В базе нет участников этой группы", {
+          description: `Показаны участники из базы эмулятора: ${count}.`,
+        })
+      } else {
+        toast.success("Участники загружены из базы", { description: `${count} участников` })
       }
-
-      toast.success("Загрузка из базы запущена", {
-        description: `Задача ${result.taskId} зарегистрирована. Подгрузка данных займет несколько секунд.`,
-      })
-
-      await refreshStatus(true)
-      await refreshTasks()
     } catch (err) {
       toast.error("Не удалось загрузить участников из базы", { description: errorMessage(err) })
     } finally {
