@@ -552,19 +552,23 @@ export function EmulatorAuthDialog({
                   <RotateCcwIcon className="h-3 w-3" />
                   Изменить номер
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void handleRequestCall()}
-                  disabled={loading || calling}
-                  className="text-purple-600 hover:underline flex items-center gap-1"
-                >
-                  {calling ? (
-                    <Loader2Icon className="h-3 w-3 animate-spin" />
-                  ) : (
-                    <PhoneIncomingIcon className="h-3 w-3" />
-                  )}
-                  Позвонить ещё раз
-                </button>
+                {/* Только если бэкенд сам нажал «Позвонить мне»: старый бэкенд
+                    не знает /api/auth/call, и кнопка там была бы пустой. */}
+                {verification === "call" && (
+                  <button
+                    type="button"
+                    onClick={() => void handleRequestCall()}
+                    disabled={loading || calling}
+                    className="text-purple-600 hover:underline flex items-center gap-1"
+                  >
+                    {calling ? (
+                      <Loader2Icon className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <PhoneIncomingIcon className="h-3 w-3" />
+                    )}
+                    Позвонить ещё раз
+                  </button>
+                )}
               </div>
 
               {onOpenScreen && (

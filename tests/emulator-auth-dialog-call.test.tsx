@@ -99,4 +99,23 @@ describe("EmulatorAuthDialog — вход по звонку Viber", () => {
       })
     )
   })
+
+  it("со старым бэкендом (без звонка) остаётся прежний шаг SMS-кода", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true, message: "Номер отправлен. Ожидайте SMS-код подтверждения." }),
+      }))
+    )
+    render(<EmulatorAuthDialog emulator={EMULATOR} open onOpenChange={vi.fn()} />)
+    fireEvent.change(screen.getByLabelText(/Номер телефона Viber/i), {
+      target: { value: "+48794034881" },
+    })
+    fireEvent.click(screen.getByRole("button", { name: /Отправить номер/i }))
+
+    await waitFor(() => expect(screen.getByLabelText("Код подтверждения (SMS / звонок)")).toBeTruthy())
+    expect(screen.queryByRole("button", { name: /Позвонить ещё раз/i })).toBeNull()
+  })
 })

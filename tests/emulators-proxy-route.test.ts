@@ -23,6 +23,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  delete process.env.SCRCPY_URL
+  delete process.env.SCRCPY_PUBLIC_URL
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
 })
@@ -64,7 +66,9 @@ describe("emulator proxy", () => {
   })
 
   it("replaces the agent's localhost screen link with the VPS address", async () => {
-    process.env.EMULATOR_AGENT_URL = "http://136.92.24.88:9000"
+    process.env.EMULATOR_AGENT_URL = "http://host.docker.internal:9000"
+    process.env.SCRCPY_URL = "http://host.docker.internal:8000"
+    process.env.SCRCPY_PUBLIC_URL = "http://136.92.24.88:8000"
     fetchMock
       .mockResolvedValueOnce(
         new Response(

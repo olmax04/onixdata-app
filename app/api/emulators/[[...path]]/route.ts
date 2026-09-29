@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 
-import { formatScrcpyStreamUrl, scrcpyUpstreamOrigin } from "@/lib/scrcpy"
+import { formatScrcpyStreamUrl, scrcpyPublicOrigin } from "@/lib/scrcpy"
 
 const DEFAULT_PARSER_URL = process.env.VIBER_PARSER_URL || "http://127.0.0.1:8080"
 const UPSTREAM_TIMEOUT_MS = 15_000
@@ -58,11 +58,11 @@ function normalizeScrcpyUrl<T extends EmulatorLike>(emulator: T, publicOrigin: s
 /**
  * Агент собирает ссылку на экран из HOST_PUBLIC_IP и без него отдаёт
  * `localhost`, да ещё и с `ws` без `proxy-adb`. Здесь ссылка пересобирается:
- * loopback-хост меняется на адрес scrcpy-web, известный панели.
+ * loopback-хост меняется на публичный адрес scrcpy-web (SCRCPY_PUBLIC_URL).
  */
 function normalizeScrcpyUrls(data: unknown): unknown {
   if (!data || typeof data !== "object") return data
-  const publicOrigin = scrcpyUpstreamOrigin()
+  const publicOrigin = scrcpyPublicOrigin()
   const record = data as { emulators?: unknown }
   if (Array.isArray(record.emulators)) {
     return {
