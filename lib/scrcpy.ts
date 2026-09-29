@@ -167,3 +167,24 @@ export function scrcpyUpstreamOrigin(
   }
   return null
 }
+
+/**
+ * Адрес scrcpy-web, открываемый из браузера (прямая ссылка, подмена localhost
+ * от агента). В compose панель ходит в scrcpy-web по внутреннему адресу
+ * (`host.docker.internal:8000`), который браузеру недоступен, поэтому
+ * публичный задаётся отдельно: `SCRCPY_PUBLIC_URL`, иначе — как у прокси.
+ */
+export function scrcpyPublicOrigin(
+  env: Record<string, string | undefined> = process.env
+): string | null {
+  const explicit = env.SCRCPY_PUBLIC_URL?.trim()
+  if (explicit) {
+    try {
+      const url = new URL(explicit)
+      if (url.protocol === "http:" || url.protocol === "https:") return url.origin
+    } catch {
+      // Некорректное значение — как без него.
+    }
+  }
+  return scrcpyUpstreamOrigin(env)
+}

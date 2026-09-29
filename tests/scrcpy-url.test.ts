@@ -6,6 +6,7 @@ import {
   isLoopbackHost,
   panelScrcpyStreamUrl,
   resolveScrcpyUdid,
+  scrcpyPublicOrigin,
   scrcpyUpstreamOrigin,
 } from "../lib/scrcpy"
 
@@ -116,5 +117,22 @@ describe("scrcpyUpstreamOrigin", () => {
   it("без настроек возвращает null", () => {
     expect(scrcpyUpstreamOrigin({})).toBeNull()
     expect(scrcpyUpstreamOrigin({ SCRCPY_URL: "ftp://x" })).toBeNull()
+  })
+})
+
+describe("scrcpyPublicOrigin", () => {
+  it("в compose отделяет публичный адрес от внутреннего адреса прокси", () => {
+    const env = {
+      SCRCPY_URL: "http://host.docker.internal:8000",
+      SCRCPY_PUBLIC_URL: "http://136.92.24.88:8000",
+    }
+    expect(scrcpyUpstreamOrigin(env)).toBe("http://host.docker.internal:8000")
+    expect(scrcpyPublicOrigin(env)).toBe("http://136.92.24.88:8000")
+  })
+
+  it("без SCRCPY_PUBLIC_URL совпадает с адресом прокси", () => {
+    expect(scrcpyPublicOrigin({ SCRCPY_URL: "http://136.92.24.88:8000" })).toBe(
+      "http://136.92.24.88:8000"
+    )
   })
 })
