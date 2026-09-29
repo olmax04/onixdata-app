@@ -1,11 +1,14 @@
-# Деплой на GCP (docker compose + Caddy)
+# Деплой на GCP (compose Viber-parser + Caddy)
 
-Панель собирается из этого репозитория на VM (`/home/kkurzau/onixdata-app`)
-и запускается сервисом `onixdata-client` в общем compose рядом с Viber-parser,
-эмуляторами и Caddy. Caddy терминирует HTTPS и проксирует домен панели в
-`onixdata-client:3000`.
+Панель — клиент Viber-parser. Она собирается из этого репозитория на VM
+(`/home/kkurzau/onixdata-app`) и запускается сервисом `onixdata-client` в
+`docker-compose.yml` проекта Viber-parser (`/home/kkurzau/Viber-parser`).
+Caddy терминирует HTTPS и проксирует домен панели в `onixdata-client:3000`.
 
-## Сервис в compose
+Все сервисы compose сидят в одной сети (`viber-parser_default`), поэтому панель
+обращается к ним по именам сервисов.
+
+## Сервис в `Viber-parser/docker-compose.yml`
 
 ```yaml
   onixdata-client:
@@ -16,22 +19,24 @@
     restart: unless-stopped
     env_file:
       - /home/kkurzau/onixdata-app/.env
-    extra_hosts:
-      # scrcpy-web (8000) и emulator-agent (9000) опубликованы на хосте VM
-      - "host.docker.internal:host-gateway"
+    depends_on:
+      - viber-parser-api
+      - emulator-agent
+      - scrcpy-web
 ```
 
 - Файл переменных подключается через `env_file`. Строка
   `environment: - /path/.env` файл **не** читает: она объявляет переменную с
   таким именем.
-- `.env` лежит в контексте сборки, поэтому Next.js при `next build`
-  запекает его в образ (и `NEXT_PUBLIC_*` тоже). После правки `.env` образ
-  нужно пересобрать: `docker compose up -d --build onixdata-client`.
-- Порт 3000 наружу не публикуется — к панели ходит только Caddy.
+- `.env` лежит в контексте сборки, и Next.js при `next build` запекает его в
+  образ (`NEXT_PUBLIC_*` — только так). После правки `.env` образ нужно
+  пересобрать.
+- Порт 3000 наружу не публикуется: к панели ходит только Caddy (на хосте
+  `127.0.0.1:3000` занят Grafana).
 
 ## Caddy
 
-WebSocket Caddy проксирует сам, отдельная настройка не нужна:
+WebSocket Caddy проксирует сам, отдельная настройка для `/scrcpy/` не нужна:
 
 ```caddyfile
 panel.example.com {
@@ -39,18 +44,19 @@ panel.example.com {
 }
 ```
 
-## Переменные (`/home/kkurzau/onixdata-app/.env`)
+## Переменные панели (`/home/kkurzau/onixdata-app/.env`)
 
 ```dotenv
-# REST API Viber-parser: имя сервиса в compose и порт ВНУТРИ его контейнера
+# REST API Viber-parser
 VIBER_PARSER_URL=http://viber-parser-api:8080
 
-# emulator-agent (управление инстансами) и его секрет
-EMULATOR_AGENT_URL=http://host.docker.internal:9000
-VPS_AGENT_SECRET=...
+# emulator-agent; секрет — как VPS_AGENT_SECRET в .env Viber-parser
+EMULATOR_AGENT_URL=http://emulator-agent:9000
+VPS_AGENT_SECRET=viber-secret-agent-token
 
-# scrcpy-web: куда панель проксирует /scrcpy/ (изнутри контейнера)...
-SCRCPY_URL=http://host.docker.internal:8000
+# scrcpy-web: куда панель проксирует /scrcpy/ (обязательно: из адреса агента
+# его не вывести)...
+SCRCPY_URL=http://scrcpy-web:8000
 # ...и адрес для прямой ссылки из браузера (запасной вариант)
 SCRCPY_PUBLIC_URL=http://<внешний IP VM>:8000
 
@@ -61,16 +67,22 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 Экран в панели открывается через `https://<домен>/scrcpy/…`, поэтому порт 8000
 в firewall GCP нужен только для прямой ссылки; его можно закрыть.
 
-На стороне emulator-agent задайте `HOST_PUBLIC_IP` (в `docker-compose.vps.yml`
-это `VPS_PUBLIC_IP`) внешним IP VM — иначе агент отдаёт ссылки на `localhost`.
-Панель их исправляет, но другим клиентам агента это не поможет.
+## Переменные Viber-parser (`/home/kkurzau/Viber-parser/.env`)
 
-## Обновление
+```dotenv
+HOST_PUBLIC_IP=<внешний IP VM>
+```
+
+Без неё emulator-agent строит ссылки на экран с `localhost`
+(`HOST_PUBLIC_IP=${HOST_PUBLIC_IP:-localhost}` в compose). Панель такие
+ссылки исправляет сама, но другим клиентам агента это не поможет.
+
+## Обновление панели
 
 ```bash
 cd ~/onixdata-app
 git fetch origin && git checkout <ветка> && git pull
-cd <каталог с docker-compose.yml>
+cd ~/Viber-parser
 docker compose up -d --build onixdata-client
 docker compose logs -f --tail=50 onixdata-client
 ```
@@ -78,8 +90,8 @@ docker compose logs -f --tail=50 onixdata-client
 Проверка связности изнутри контейнера:
 
 ```bash
-docker compose exec onixdata-client wget -qO- http://host.docker.internal:8000/ | head -c 200
-docker compose exec onixdata-client wget -qO- "$VIBER_PARSER_URL/api/viber/status"
+docker compose exec onixdata-client wget -qO- http://scrcpy-web:8000/ | head -c 200
+docker compose exec onixdata-client wget -qO- http://viber-parser-api:8080/api/viber/status
 ```
 
 Контейнер стартует командой `node server/start.cjs` (см. Dockerfile): это
