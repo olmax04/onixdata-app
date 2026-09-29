@@ -277,7 +277,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
       // Подтягиваем статус синхронизации с базой данных (Supabase)
       const syncGroupMap = new Map<number | string, { participantCount: number; activeMembers?: number; lastSyncedAt?: string }>()
       try {
-        const syncRes = await fetch(`${origin}/api/users/sync/status`, {
+        // Supabase хранит группы по инстансам, а номера бесед у эмуляторов
+        // совпадают: без deviceId в карту попали бы чужие группы с тем же ID.
+        const syncUrl = new URL(`${origin}/api/users/sync/status`)
+        syncUrl.searchParams.set("deviceId", deviceId || "default")
+        const syncRes = await fetch(syncUrl.toString(), {
           cache: "no-store",
           signal: AbortSignal.timeout(10000),
         })
@@ -347,8 +351,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
         ? new URL(`${origin}/api/groups/${encodeURIComponent(groupTargetId)}/participants`)
         : new URL(`${origin}/api/users/group/${encodeURIComponent(groupTargetId)}`)
 
-      if (deviceId && requestedSource === "emulator") {
-        targetUrl.searchParams.set("deviceId", deviceId)
+      // Для Supabase инстанс нужен всегда: копии одной беседы у разных
+      // эмуляторов лежат под одним conversation_id.
+      if (requestedSource === "emulator") {
+        if (deviceId) targetUrl.searchParams.set("deviceId", deviceId)
+      } else {
+        targetUrl.searchParams.set("deviceId", deviceId || "default")
       }
       forwardRefresh(request, targetUrl)
 

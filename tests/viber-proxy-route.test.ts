@@ -284,6 +284,17 @@ describe("GET /api/viber/groups/:id/members", () => {
     expect(body.source).toBe("supabase")
   })
 
+  it("читает из Supabase копию группы своего инстанса", async () => {
+    fetchMock.mockResolvedValue(participantsResponse())
+
+    await GET(req("groups/3/members?deviceId=test-emulator"), ctx("groups/3/members"))
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${ORIGIN}/api/users/group/3?deviceId=test-emulator`)
+
+    fetchMock.mockClear()
+    await GET(req("groups/3/members"), ctx("groups/3/members"))
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${ORIGIN}/api/users/group/3?deviceId=default`)
+  })
+
   it("при source=emulator запрашивает эмулятор (/api/groups/:id/participants)", async () => {
     fetchMock.mockResolvedValue(participantsResponse())
 
@@ -314,6 +325,27 @@ describe("GET /api/viber/groups", () => {
     fetchMock.mockClear()
     await GET(req("groups?refresh=1"), ctx("groups"))
     expect(String(fetchMock.mock.calls[0][0])).toContain("refresh=1")
+  })
+
+  it("берёт счётчик «в базе» только из групп своего инстанса", async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (String(url).includes("/api/users/sync/status")) {
+        return new Response(
+          JSON.stringify({
+            groups: [{ instanceId: "test-emulator", conversationId: 42, participantCount: 3300 }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      }
+      return groupsResponse()
+    })
+
+    const res = await GET(req("groups?deviceId=test-emulator"), ctx("groups"))
+    const body = await res.json()
+
+    const statusCall = fetchMock.mock.calls.map((c) => String(c[0])).find((u) => u.includes("/users/sync/status"))
+    expect(statusCall).toBe(`${ORIGIN}/api/users/sync/status?deviceId=test-emulator`)
+    expect(body.groups[0].dbParticipantCount).toBe(3300)
   })
 
   it("прокидывает onDevice в апстрим и не добавляет его без запроса", async () => {
