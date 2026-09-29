@@ -15,5 +15,11 @@ export const config = {
      * - static assets
      */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    /*
+     * The scrcpy-web proxy needs every path, images included: they live on
+     * the VPS, not in `public/`.
+     */
+    '/scrcpy',
+    '/scrcpy/:path*',
   ],
 }

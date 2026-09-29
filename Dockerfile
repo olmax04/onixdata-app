@@ -45,9 +45,11 @@ RUN chown nextjs:nodejs .next
 # Automatically leverage output traces to reduce image size
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# WebSocket-прокси экрана эмулятора (/scrcpy/*) поверх standalone server.js
+COPY --from=builder --chown=nextjs:nodejs /app/server ./server
 
 USER nextjs
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["node", "server/start.cjs"]

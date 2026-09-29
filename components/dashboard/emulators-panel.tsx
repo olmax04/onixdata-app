@@ -51,7 +51,7 @@ import {
 } from "@/components/ui/table"
 import { formatPhoneNumber, formatViberAccount, getEmulatorStatus, type EmulatorItem } from "@/lib/emulator-status"
 import { NewEmulatorDialog } from "./new-emulator-dialog"
-import { EmulatorScreenDialog, formatScrcpyStreamUrl } from "./emulator-screen-dialog"
+import { EmulatorScreenDialog, ScrcpyStreamLink } from "./emulator-screen-dialog"
 import { EmulatorLogsDialog } from "./emulator-logs-dialog"
 import { EmulatorAuthDialog } from "./emulator-auth-dialog"
 import { InstanceFolderCard } from "./instance-folder-card"
@@ -617,15 +617,14 @@ export function EmulatorsPanel() {
                               </DropdownMenuItem>
                               {emu.scrcpyUrl && (
                                 <DropdownMenuItem asChild>
-                                  <a
-                                    href={formatScrcpyStreamUrl(emu.scrcpyUrl, emu.adbPort) || emu.scrcpyUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
+                                  <ScrcpyStreamLink
+                                    scrcpyUrl={emu.scrcpyUrl}
+                                    adbPort={emu.adbPort}
                                     className="flex items-center"
                                   >
                                     <ExternalLinkIcon className="h-4 w-4 mr-2" />
                                     Экран в новой вкладке
-                                  </a>
+                                  </ScrcpyStreamLink>
                                 </DropdownMenuItem>
                               )}
                               <DropdownMenuSeparator />
@@ -685,6 +684,7 @@ export function EmulatorsPanel() {
             setScreenTarget({
               name: authTarget.name,
               url: authTarget.scrcpyUrl ?? null,
+              adbPort: authTarget.adbPort,
             })
           }}
         />

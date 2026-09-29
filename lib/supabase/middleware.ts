@@ -1,6 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { getSupabaseUrl, getSupabaseAnonKey, isSupabaseConfigured } from './config'
+import { isScrcpyProxyPath, scrcpyProxyResponse } from '../scrcpy-proxy'
 
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({
@@ -59,17 +60,35 @@ export async function updateSession(request: NextRequest) {
     return redirectResponse
   }
 
-  // Protected API routes: /api/viber/* and /api/emulators/*
+  // Protected API routes: /api/viber/*, /api/emulators/* and /api/scrcpy/*
   // We only enforce auth in production or when Supabase keys are configured
   if (
     !user &&
-    (pathname.startsWith('/api/viber') || pathname.startsWith('/api/emulators')) &&
+    (pathname.startsWith('/api/viber') ||
+      pathname.startsWith('/api/emulators') ||
+      pathname.startsWith('/api/scrcpy')) &&
     isSupabaseConfigured()
   ) {
     return NextResponse.json(
       { error: 'Unauthorized: требуется авторизация через Supabase' },
       { status: 401 }
     )
+  }
+
+  // Screen stream proxy: /scrcpy/* — the device is fully controllable from
+  // there, so it is guarded like the API routes above.
+  if (isScrcpyProxyPath(pathname)) {
+    if (!user && isSupabaseConfigured()) {
+      return NextResponse.json(
+        { error: 'Unauthorized: требуется авторизация через Supabase' },
+        { status: 401 }
+      )
+    }
+    const proxied = scrcpyProxyResponse(request)
+    response.cookies.getAll().forEach((cookie) => {
+      proxied.cookies.set(cookie.name, cookie.value, cookie)
+    })
+    return proxied
   }
 
   // Auth pages: /login, /register, /forgot-password

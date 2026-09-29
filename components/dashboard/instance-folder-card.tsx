@@ -55,7 +55,7 @@ import {
   translateSetupStage,
   type EmulatorItem,
 } from "@/lib/emulator-status"
-import { formatScrcpyStreamUrl } from "./emulator-screen-dialog"
+import { ScrcpyStreamLink } from "./emulator-screen-dialog"
 import { EmulatorStatusBadge } from "./emulator-status-badge"
 
 interface InstanceFolderCardProps {
@@ -260,14 +260,10 @@ export function InstanceFolderCard({
               </DropdownMenuItem>
               {emulator.scrcpyUrl && (
                 <DropdownMenuItem asChild>
-                  <a
-                    href={formatScrcpyStreamUrl(emulator.scrcpyUrl, emulator.adbPort) || emulator.scrcpyUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
+                  <ScrcpyStreamLink scrcpyUrl={emulator.scrcpyUrl} adbPort={emulator.adbPort}>
                     <ExternalLinkIcon className="h-4 w-4 mr-2" />
                     Экран в новой вкладке
-                  </a>
+                  </ScrcpyStreamLink>
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
@@ -507,15 +503,14 @@ export function InstanceFolderCard({
                 <span className="text-muted-foreground">Экран (Scrcpy Web):</span>
                 <div>
                   {emulator.scrcpyUrl ? (
-                    <a
-                      href={formatScrcpyStreamUrl(emulator.scrcpyUrl, emulator.adbPort) || emulator.scrcpyUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
+                    <ScrcpyStreamLink
+                      scrcpyUrl={emulator.scrcpyUrl}
+                      adbPort={emulator.adbPort}
                       className="text-primary hover:underline inline-flex items-center gap-1 font-mono text-[11px]"
                     >
                       <span>Открыть стрим</span>
                       <ExternalLinkIcon className="h-3 w-3" />
-                    </a>
+                    </ScrcpyStreamLink>
                   ) : (
                     <span className="text-muted-foreground">Не настроен</span>
                   )}
