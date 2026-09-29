@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 
+import { formatScrcpyStreamUrl, scrcpyUpstreamOrigin } from "@/lib/scrcpy"
+
 const DEFAULT_PARSER_URL = process.env.VIBER_PARSER_URL || "http://127.0.0.1:8080"
 const UPSTREAM_TIMEOUT_MS = 15_000
 
@@ -40,6 +42,38 @@ function agentHeaders(extra?: Record<string, string>): Record<string, string> {
     ...extra,
   }
   return h
+}
+
+type EmulatorLike = { scrcpyUrl?: unknown; adbPort?: unknown }
+
+function normalizeScrcpyUrl<T extends EmulatorLike>(emulator: T, publicOrigin: string | null): T {
+  if (typeof emulator.scrcpyUrl !== "string") return emulator
+  const adbPort = typeof emulator.adbPort === "number" ? emulator.adbPort : null
+  return {
+    ...emulator,
+    scrcpyUrl: formatScrcpyStreamUrl(emulator.scrcpyUrl, adbPort, publicOrigin),
+  }
+}
+
+/**
+ * Агент собирает ссылку на экран из HOST_PUBLIC_IP и без него отдаёт
+ * `localhost`, да ещё и с `ws` без `proxy-adb`. Здесь ссылка пересобирается:
+ * loopback-хост меняется на адрес scrcpy-web, известный панели.
+ */
+function normalizeScrcpyUrls(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data
+  const publicOrigin = scrcpyUpstreamOrigin()
+  const record = data as { emulators?: unknown }
+  if (Array.isArray(record.emulators)) {
+    return {
+      ...record,
+      emulators: record.emulators.map((emu) =>
+        emu && typeof emu === "object" ? normalizeScrcpyUrl(emu as EmulatorLike, publicOrigin) : emu
+      ),
+    }
+  }
+  if ("scrcpyUrl" in record) return normalizeScrcpyUrl(record as EmulatorLike, publicOrigin)
+  return data
 }
 
 function forwardResponse(response: Response): NextResponse {
@@ -173,7 +207,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
             })
           }
         } catch {}
-        return NextResponse.json(data, { status: agentRes.status })
+        return NextResponse.json(normalizeScrcpyUrls(data), { status: agentRes.status })
       }
       const text = await agentRes.text()
       return new NextResponse(text, {
@@ -197,7 +231,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       const contentType = upstream.headers.get("content-type") || ""
       if (contentType.includes("application/json")) {
         const data = await upstream.json()
-        return NextResponse.json(data, { status: upstream.status })
+        return NextResponse.json(normalizeScrcpyUrls(data), { status: upstream.status })
       }
       const text = await upstream.text()
       return new NextResponse(text, {

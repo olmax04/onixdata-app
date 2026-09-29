@@ -67,6 +67,30 @@ Viber Parser отвечает `202 Accepted`, но не возвращает job
 таких участников передаются только номер, отображаемое имя и дата рождения;
 роли, статусы и внутренние идентификаторы отбрасываются серверным proxy.
 
+## Экран эмуляторов (scrcpy-web)
+
+Экран эмулятора показывается через `scrcpy-web` (ws-scrcpy) на VPS, порт
+`8000`. Ссылки строятся в `lib/scrcpy.ts` в рабочем формате:
+плеер `broadway`, WebSocket — `?action=proxy-adb&remote=tcp:8886&udid=…`.
+Если emulator-agent отдаёт ссылку с `localhost` (не задан `HOST_PUBLIC_IP`),
+`/api/emulators` подменяет хост на адрес из `SCRCPY_URL`.
+
+Панель на HTTPS не может встроить HTTP-страницу в iframe (Mixed Content),
+поэтому scrcpy-web проксируется на домен панели по пути `/scrcpy/`:
+
+- HTTP-запросы (страница, `bundle.js`, `avc.wasm`) — через middleware
+  (`lib/scrcpy-proxy.ts`), только для вошедших пользователей;
+- WebSocket — через `server/start.cjs`: Next.js 14 не умеет проксировать
+  апгрейды из middleware. Поэтому контейнер запускается командой
+  `node server/start.cjs`, а не `node server.js`.
+
+```dotenv
+SCRCPY_URL=http://136.92.24.88:8000
+```
+
+В `npm run dev` WebSocket-прокси нет, и на HTTP-панели экран открывается
+напрямую с VPS.
+
 ## Важно: остальная часть интерфейса остаётся прототипом
 
 - **Реальная интеграция есть только в разделе Viber Parser.** Остальные экраны
