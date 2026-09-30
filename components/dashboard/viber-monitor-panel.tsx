@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
   SelectContent,
@@ -589,7 +588,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
           {groupsError ? (
             <p className="text-[11px] text-destructive">{groupsError}</p>
           ) : null}
-          <ScrollArea className="h-[min(28rem,60vh)] rounded-lg border">
+          <div className="h-[min(28rem,60vh)] overflow-y-auto rounded-lg border [scrollbar-color:hsl(var(--border))_transparent] [scrollbar-width:thin]">
             {loading && groupRows.length === 0 ? (
               <p className="p-4 text-xs text-muted-foreground">Загрузка групп…</p>
             ) : groupRows.length === 0 ? (
@@ -631,7 +630,7 @@ export function ViberMonitorPanel({ deviceId, initialQuery = "" }: ViberMonitorP
                 ))}
               </ul>
             )}
-          </ScrollArea>
+          </div>
           <p className="text-[11px] text-muted-foreground">
             Включено: {enabledCount} из {groupRows.length}
           </p>
