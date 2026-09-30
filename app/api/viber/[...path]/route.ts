@@ -274,8 +274,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
         onDevice?: boolean
       }>
 
-      // Подтягиваем статус синхронизации с базой данных (Supabase)
-      const syncGroupMap = new Map<number | string, { participantCount: number; activeMembers?: number; lastSyncedAt?: string }>()
+      // Подтягиваем статус синхронизации с базой данных (Supabase).
+      // conversationId — локальный id беседы в SQLite конкретного инстанса,
+      // глобально он не уникален: сопоставляем сначала по groupKey (id группы
+      // Viber), а по conversationId — только среди строк текущего инстанса.
+      // Ключ вида «conv:<id>» тоже локальный и глобальным не считается.
+      type SyncInfo = { participantCount: number; activeMembers?: number; lastSyncedAt?: string }
+      const syncByGroupKey = new Map<string, SyncInfo>()
+      const syncByConversation = new Map<number, SyncInfo>()
+      const putNewest = <K,>(map: Map<K, SyncInfo>, key: K, info: SyncInfo) => {
+        const current = map.get(key)
+        if (!current || Date.parse(info.lastSyncedAt ?? "") > Date.parse(current.lastSyncedAt ?? "")) {
+          map.set(key, info)
+        }
+      }
       try {
         const syncRes = await fetch(`${origin}/api/users/sync/status`, {
           cache: "no-store",
@@ -285,19 +297,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
           const syncData = await syncRes.json().catch(() => null)
           if (Array.isArray(syncData?.groups)) {
             for (const sg of syncData.groups) {
-              if (sg.conversationId !== undefined && sg.conversationId !== null) {
-                syncGroupMap.set(Number(sg.conversationId), {
-                  participantCount: sg.participantCount ?? 0,
-                  activeMembers: sg.activeMembers,
-                  lastSyncedAt: sg.lastSyncedAt,
-                })
+              const info: SyncInfo = {
+                participantCount: sg.participantCount ?? 0,
+                activeMembers: sg.activeMembers,
+                lastSyncedAt: sg.lastSyncedAt,
               }
-              if (sg.groupKey) {
-                syncGroupMap.set(String(sg.groupKey), {
-                  participantCount: sg.participantCount ?? 0,
-                  activeMembers: sg.activeMembers,
-                  lastSyncedAt: sg.lastSyncedAt,
-                })
+              const groupKey = sg.groupKey ? String(sg.groupKey) : null
+              if (groupKey && !groupKey.startsWith("conv:")) {
+                putNewest(syncByGroupKey, groupKey, info)
+              }
+              if (deviceId && sg.instanceId !== deviceId) continue
+              const rawConversationId = sg.conversationId ?? (groupKey?.startsWith("conv:") ? groupKey.slice(5) : null)
+              const conversationId = rawConversationId === null || rawConversationId === undefined ? NaN : Number(rawConversationId)
+              if (Number.isFinite(conversationId)) {
+                putNewest(syncByConversation, conversationId, info)
               }
             }
           }
@@ -307,7 +320,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       }
 
       const groups = list.map((g) => {
-        const syncInfo = syncGroupMap.get(g.id) ?? (g.groupId ? syncGroupMap.get(String(g.groupId)) : undefined)
+        const syncInfo = (g.groupId ? syncByGroupKey.get(String(g.groupId)) : undefined) ?? syncByConversation.get(g.id)
         const dbCount = syncInfo?.participantCount ?? 0
         return {
           conversationId: g.id,
@@ -347,8 +360,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
         ? new URL(`${origin}/api/groups/${encodeURIComponent(groupTargetId)}/participants`)
         : new URL(`${origin}/api/users/group/${encodeURIComponent(groupTargetId)}`)
 
-      if (deviceId && requestedSource === "emulator") {
-        targetUrl.searchParams.set("deviceId", deviceId)
+      if (deviceId) {
+        // conversationId уникален только в пределах инстанса: Supabase-запросу
+        // передаём инстанс, чтобы не получить одноимённую беседу другого эмулятора.
+        targetUrl.searchParams.set(requestedSource === "emulator" ? "deviceId" : "instanceId", deviceId)
       }
       forwardRefresh(request, targetUrl)
 

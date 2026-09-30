@@ -348,6 +348,52 @@ describe("GET /api/viber/groups", () => {
     expect(body.groups[0]).toMatchObject({ conversationId: 7, groupId: null })
     expect(body.groups[1]).toMatchObject({ conversationId: 42, groupId: "777" })
   })
+
+  it("не подставляет статус синхронизации беседы с тем же conversationId из другого инстанса", async () => {
+    // conversationId уникален только в пределах инстанса. Статус приходит
+    // по убыванию lastSyncedAt, и более старая строка другого эмулятора с тем
+    // же conversationId перезаписывала актуальную: панель показывала 0.
+    fetchMock.mockImplementation(async (url: string) => {
+      const body = String(url).includes("/api/users/sync/status")
+        ? {
+            groups: [
+              {
+                instanceId: "test-emulator",
+                groupKey: "5569560781658637023",
+                conversationId: 3,
+                participantCount: 3295,
+                lastSyncedAt: "2026-09-30T13:53:00Z",
+              },
+              {
+                instanceId: "viber-worker-03",
+                groupKey: "5937770265754866656",
+                conversationId: 3,
+                participantCount: 0,
+                lastSyncedAt: "2026-09-30T02:12:00Z",
+              },
+            ],
+          }
+        : [
+            { id: 3, type: 5, groupId: "5569560781658637023", name: "Берлин", messageCount: 10, participantCount: 3296 },
+            { id: 4, type: 5, groupId: null, name: "Без ключа", messageCount: 1, participantCount: 2 },
+          ]
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    })
+
+    const res = await GET(req("groups?deviceId=test-emulator"), ctx("groups"))
+    const body = await res.json()
+
+    expect(body.groups[0]).toMatchObject({
+      conversationId: 3,
+      dbParticipantCount: 3295,
+      hasStoredData: true,
+      lastSyncedAt: "2026-09-30T13:53:00Z",
+    })
+    expect(body.groups[1]).toMatchObject({ conversationId: 4, dbParticipantCount: 0, lastSyncedAt: null })
+  })
 })
 
 describe("GET /api/viber/database/stats", () => {
